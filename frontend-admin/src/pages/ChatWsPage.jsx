@@ -1,0 +1,91 @@
+import { useEffect, useRef, useState } from "react";
+import { Client } from "@stomp/stompjs";
+import { api } from "../services/api";
+
+export default function ChatWsPage() {
+  const [tenants, setTenants] = useState([]);
+  const [tenantId, setTenantId] = useState("");
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const clientRef = useRef(null);
+  const sessionIdRef = useRef(crypto.randomUUID());
+
+  useEffect(() => { api.listTenants().then(setTenants); }, []);
+
+  useEffect(() => {
+    const client = new Client({
+      brokerURL: "ws://localhost:8080/ws-chat",
+      reconnectDelay: 5000,
+      onConnect: () => {
+        client.subscribe("/topic/replies", (msg) => {
+          const body = JSON.parse(msg.body);
+          if (body.sessionId === sessionIdRef.current) {
+            setMessages(prev => [...prev, { from: "bot", text: body.reply }]);
+          }
+        });
+      }
+    });
+    client.activate();
+    clientRef.current = client;
+    return () => client.deactivate();
+  }, []);
+
+  const send = () => {
+    if (!input || !tenantId || !clientRef.current) return;
+    const payload = {
+      sessionId: sessionIdRef.current,
+      tenantId: Number(tenantId),
+      content: input
+    };
+    clientRef.current.publish({
+      destination: "/app/chat.send",
+      body: JSON.stringify(payload)
+    });
+    setMessages(prev => [...prev, { from: "user", text: input }]);
+    setInput("");
+  };
+
+  return (
+    <div>
+      <h1 className="text-2xl font-bold mb-4">Chat Test (WebSocket)</h1>
+      <div className="mb-3 flex gap-2 items-center">
+        <span className="font-semibold">Tenant:</span>
+        <select
+          className="border p-2 rounded"
+          value={tenantId}
+          onChange={(e) => setTenantId(e.target.value)}
+        >
+          <option value="">-- select --</option>
+          {tenants.map(t => (
+            <option key={t.id} value={t.id}>{t.name}</option>
+          ))}
+        </select>
+      </div>
+      <div className="border rounded bg-white h-64 p-3 overflow-y-auto mb-3">
+        {messages.map((m, i) => (
+          <div key={i} className={`mb-1 ${m.from === "user" ? "text-right" : "text-left"}`}>
+            <span
+              className={
+                "inline-block px-2 py-1 rounded text-sm " +
+                (m.from === "user" ? "bg-blue-600 text-white" : "bg-gray-200")
+              }
+            >
+              {m.text}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <input
+          className="border p-2 rounded flex-1"
+          placeholder="Type a message..."
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+        />
+        <button className="bg-green-600 text-white px-4 py-2 rounded" onClick={send}>
+          Send
+        </button>
+      </div>
+    </div>
+  );
+}

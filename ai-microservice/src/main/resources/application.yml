@@ -1,0 +1,14 @@
+server:
+  port: 8081
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/ai_microservice
+    username: user
+    password: pass
+  jpa:
+    hibernate:
+      ddl-auto: update
+
+security:
+  api-key: "MY_INTERNAL_AI_KEY"
