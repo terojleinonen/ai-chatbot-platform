@@ -1,7 +1,10 @@
 package com.demo.backend.service;
 
 import com.demo.backend.entity.AdminUser;
+import com.demo.backend.entity.Role;
+import com.demo.backend.entity.Tenant;
 import com.demo.backend.repository.AdminUserRepository;
+import com.demo.backend.repository.TenantRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -9,7 +12,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.Locale;
 import java.util.regex.Pattern;
 
@@ -20,10 +26,12 @@ public class UserService {
     private static final Pattern USERNAME = Pattern.compile("[a-z0-9._-]{3,50}");
 
     private final AdminUserRepository users;
+    private final TenantRepository tenants;
     private final PasswordEncoder encoder;
 
-    public UserService(AdminUserRepository users, PasswordEncoder encoder) {
+    public UserService(AdminUserRepository users, TenantRepository tenants, PasswordEncoder encoder) {
         this.users = users;
+        this.tenants = tenants;
         this.encoder = encoder;
     }
 
@@ -48,7 +56,7 @@ public class UserService {
     }
 
     @Transactional
-    public AdminUser create(String username, String password) {
+    public AdminUser create(String username, String password, Role role, Collection<Long> tenantIds) {
         String name = normalizeUsername(username);
         if (!USERNAME.matcher(name).matches()) {
             throw badRequest("Username must be 3-50 characters: letters, digits, '.', '_' or '-'");
@@ -57,7 +65,39 @@ public class UserService {
         if (users.existsByUsername(name)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Username already exists");
         }
-        return users.save(new AdminUser(name, encoder.encode(password)));
+        AdminUser user = new AdminUser(name, encoder.encode(password), requireRole(role));
+        user.setTenants(resolveTenants(user.getRole(), tenantIds));
+        return users.save(user);
+    }
+
+    /**
+     * Changes another user's role and tenant assignments. Changing your own is refused, so a super admin
+     * cannot demote themselves and at least one super admin always remains.
+     */
+    @Transactional
+    public AdminUser updateAccess(Long id, Role role, Collection<Long> tenantIds, String currentUsername) {
+        AdminUser user = users.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+        if (user.getUsername().equals(normalizeUsername(currentUsername))) {
+            throw badRequest("You cannot change your own access");
+        }
+        user.setRole(requireRole(role));
+        user.setTenants(resolveTenants(user.getRole(), tenantIds));
+        return user;
+    }
+
+    private static Role requireRole(Role role) {
+        if (role == null) throw badRequest("Role is required (SUPER_ADMIN or TENANT_ADMIN)");
+        return role;
+    }
+
+    /** Super admins can access every tenant, so they keep no explicit assignments. */
+    private Set<Tenant> resolveTenants(Role role, Collection<Long> tenantIds) {
+        if (role == Role.SUPER_ADMIN || tenantIds == null || tenantIds.isEmpty()) return new HashSet<>();
+        Set<Long> ids = new HashSet<>(tenantIds);
+        List<Tenant> found = tenants.findAllById(ids);
+        if (found.size() != ids.size()) throw badRequest("Unknown tenant id");
+        return new HashSet<>(found);
     }
 
     /** Sets another user's password. Admins change their own password via {@link #changeOwnPassword}. */

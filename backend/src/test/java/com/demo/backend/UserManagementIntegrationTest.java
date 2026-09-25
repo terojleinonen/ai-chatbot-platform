@@ -40,6 +40,7 @@ class UserManagementIntegrationTest {
     }
 
     record Creds(String username, String password) {}
+    record NewUser(String username, String password, String role) {}
 
     private ResultActions call(MockHttpServletRequestBuilder req, String token, Object body) throws Exception {
         req.header("Authorization", "Bearer " + token);
@@ -48,7 +49,11 @@ class UserManagementIntegrationTest {
     }
 
     private JsonNode createUser(String adminToken, String username) throws Exception {
-        String body = call(post("/users"), adminToken, new Creds(username, STRONG))
+        return createUser(adminToken, username, "TENANT_ADMIN");
+    }
+
+    private JsonNode createUser(String adminToken, String username, String role) throws Exception {
+        String body = call(post("/users"), adminToken, new NewUser(username, STRONG, role))
                 .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
         return json.readTree(body);
     }
@@ -77,13 +82,15 @@ class UserManagementIntegrationTest {
     @Test
     void validatesInput() throws Exception {
         String admin = login("admin", "test-password");
-        call(post("/users"), admin, new Creds("ab", STRONG)).andExpect(status().isBadRequest())
+        call(post("/users"), admin, new NewUser(uniqueName(), STRONG, null)).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("Role is required")));
+        call(post("/users"), admin, new NewUser("ab", STRONG, "TENANT_ADMIN")).andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("Username")));
-        call(post("/users"), admin, new Creds("bad name!", STRONG)).andExpect(status().isBadRequest());
-        call(post("/users"), admin, new Creds(uniqueName(), "short")).andExpect(status().isBadRequest())
+        call(post("/users"), admin, new NewUser("bad name!", STRONG, "TENANT_ADMIN")).andExpect(status().isBadRequest());
+        call(post("/users"), admin, new NewUser(uniqueName(), "short", "TENANT_ADMIN")).andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("Password must be at least 12 characters"));
-        call(post("/users"), admin, new Creds(uniqueName(), "x".repeat(73))).andExpect(status().isBadRequest());
-        call(post("/users"), admin, new Creds("admin", STRONG)).andExpect(status().isConflict())
+        call(post("/users"), admin, new NewUser(uniqueName(), "x".repeat(73), "TENANT_ADMIN")).andExpect(status().isBadRequest());
+        call(post("/users"), admin, new NewUser("admin", STRONG, "TENANT_ADMIN")).andExpect(status().isConflict())
                 .andExpect(jsonPath("$.message").value("Username already exists"));
     }
 
@@ -103,7 +110,7 @@ class UserManagementIntegrationTest {
     @Test
     void cannotDeleteYourself() throws Exception {
         String name = uniqueName();
-        long id = createUser(login("admin", "test-password"), name).get("id").asLong();
+        long id = createUser(login("admin", "test-password"), name, "SUPER_ADMIN").get("id").asLong();
         String self = login(name, STRONG);
         call(delete("/users/" + id), self, null).andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("You cannot delete your own account"));
@@ -128,7 +135,7 @@ class UserManagementIntegrationTest {
     @Test
     void cannotResetOwnPasswordWithoutCurrentPassword() throws Exception {
         String name = uniqueName();
-        long id = createUser(login("admin", "test-password"), name).get("id").asLong();
+        long id = createUser(login("admin", "test-password"), name, "SUPER_ADMIN").get("id").asLong();
         String self = login(name, STRONG);
         call(put("/users/" + id + "/password"), self, java.util.Map.of("password", "another-long-password"))
                 .andExpect(status().isBadRequest());

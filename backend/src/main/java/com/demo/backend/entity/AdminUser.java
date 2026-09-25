@@ -3,6 +3,8 @@ package com.demo.backend.entity;
 import jakarta.persistence.*;
 
 import java.time.Instant;
+import java.util.HashSet;
+import java.util.Set;
 
 @Entity
 @Table(name = "admin_users")
@@ -28,11 +30,24 @@ public class AdminUser {
 
     private Instant createdAt;
 
+    /** Existing rows (created before roles existed) become super admins, preserving their access. */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, columnDefinition = "varchar(20) default 'SUPER_ADMIN' not null")
+    private Role role = Role.TENANT_ADMIN;
+
+    /** Tenants a TENANT_ADMIN may manage. Ignored for SUPER_ADMIN, who can access every tenant. */
+    @ManyToMany(fetch = FetchType.EAGER)
+    @JoinTable(name = "admin_user_tenants",
+            joinColumns = @JoinColumn(name = "admin_user_id"),
+            inverseJoinColumns = @JoinColumn(name = "tenant_id"))
+    private Set<Tenant> tenants = new HashSet<>();
+
     public AdminUser() {}
 
-    public AdminUser(String username, String passwordHash) {
+    public AdminUser(String username, String passwordHash, Role role) {
         this.username = username;
         this.passwordHash = passwordHash;
+        this.role = role;
         this.createdAt = Instant.now();
     }
 
@@ -43,6 +58,16 @@ public class AdminUser {
     public void setPasswordHash(String passwordHash) { this.passwordHash = passwordHash; }
     public int getTokenVersion() { return tokenVersion; }
     public Instant getCreatedAt() { return createdAt; }
+    public Role getRole() { return role; }
+    public void setRole(Role role) { this.role = role; }
+    public Set<Tenant> getTenants() { return tenants; }
+    public void setTenants(Set<Tenant> tenants) { this.tenants = tenants; }
+
+    public boolean isSuperAdmin() { return role == Role.SUPER_ADMIN; }
+
+    public boolean canAccessTenant(Long tenantId) {
+        return isSuperAdmin() || tenants.stream().anyMatch(t -> t.getId().equals(tenantId));
+    }
 
     /** Sets a new password hash and revokes all tokens issued before this change. */
     public void changePasswordHash(String passwordHash) {

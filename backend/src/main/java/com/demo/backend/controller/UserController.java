@@ -1,6 +1,9 @@
 package com.demo.backend.controller;
 
 import com.demo.backend.entity.AdminUser;
+import com.demo.backend.entity.Role;
+import com.demo.backend.entity.Tenant;
+import com.demo.backend.security.AccessControl;
 import com.demo.backend.security.LoginRateLimiter;
 import com.demo.backend.security.TokenService;
 import com.demo.backend.service.UserService;
@@ -24,29 +27,48 @@ public class UserController {
     private final UserService users;
     private final TokenService tokens;
     private final LoginRateLimiter rateLimiter;
+    private final AccessControl access;
 
-    public UserController(UserService users, TokenService tokens, LoginRateLimiter rateLimiter) {
+    public UserController(UserService users, TokenService tokens, LoginRateLimiter rateLimiter,
+                          AccessControl access) {
         this.users = users;
         this.tokens = tokens;
         this.rateLimiter = rateLimiter;
+        this.access = access;
     }
 
-    public record UserDto(Long id, String username, Instant createdAt) {
-        static UserDto of(AdminUser u) { return new UserDto(u.getId(), u.getUsername(), u.getCreatedAt()); }
+    public record UserDto(Long id, String username, Instant createdAt, Role role, List<Long> tenantIds) {
+        public static UserDto of(AdminUser u) {
+            List<Long> tenantIds = u.getTenants().stream().map(Tenant::getId).sorted().toList();
+            return new UserDto(u.getId(), u.getUsername(), u.getCreatedAt(), u.getRole(), tenantIds);
+        }
     }
-    public record CreateUserRequest(String username, String password) {}
+    public record CreateUserRequest(String username, String password, Role role, List<Long> tenantIds) {}
+    public record UpdateAccessRequest(Role role, List<Long> tenantIds) {}
     public record SetPasswordRequest(String password) {}
     public record ChangeOwnPasswordRequest(String currentPassword, String newPassword) {}
 
+    // Everything except changing your own password is for super admins only.
+
     @GetMapping
     public List<UserDto> list() {
+        access.requireSuperAdmin();
         return users.list().stream().map(UserDto::of).toList();
     }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public UserDto create(@RequestBody CreateUserRequest req) {
-        return UserDto.of(users.create(req.username(), req.password()));
+        access.requireSuperAdmin();
+        return UserDto.of(users.create(req.username(), req.password(), req.role(), req.tenantIds()));
+    }
+
+    /** Sets another user's role and tenant assignments; takes effect on their next request. */
+    @PutMapping("/{id}/access")
+    public UserDto updateAccess(@PathVariable Long id, @RequestBody UpdateAccessRequest req,
+                                @AuthenticationPrincipal Jwt jwt) {
+        access.requireSuperAdmin();
+        return UserDto.of(users.updateAccess(id, req.role(), req.tenantIds(), jwt.getSubject()));
     }
 
     /** Resets another admin's password and signs them out everywhere. */
@@ -54,6 +76,7 @@ public class UserController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void resetPassword(@PathVariable Long id, @RequestBody SetPasswordRequest req,
                               @AuthenticationPrincipal Jwt jwt) {
+        access.requireSuperAdmin();
         users.resetPassword(id, req.password(), jwt.getSubject());
     }
 
@@ -92,6 +115,7 @@ public class UserController {
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable Long id, @AuthenticationPrincipal Jwt jwt) {
+        access.requireSuperAdmin();
         users.delete(id, jwt.getSubject());
     }
 }

@@ -62,10 +62,20 @@ The backend uses Spring Security with stateless JWT bearer tokens:
   is empty, the backend creates `ADMIN_USERNAME` (default `admin`) with `ADMIN_PASSWORD`. If no password
   is set, it generates one and prints it once in the log (`Created admin user 'admin' with generated password: ...`).
   Changing `ADMIN_PASSWORD` later does not change an existing user's password; use the **Users** page.
-- **Users page** (admin panel): list admins, add users, reset another user's password, delete users, and change
-  your own password (requires the current one; wrong guesses count toward the login rate limit). Usernames are
+- **Roles and tenant permissions:**
+  - **Super admin** – manages users and creates tenants; can access every tenant. The bootstrap admin, and any
+    admin that existed before roles were introduced, is a super admin.
+  - **Tenant admin** – can only list and manage the tenants assigned to them (their FAQs, import/export,
+    retraining, chat test). Cannot create tenants or manage users.
+
+  Every tenant and FAQ endpoint checks access (403 otherwise). Roles and assignments are read from the database
+  on each request, so changes apply immediately without signing in again. The chat WebSocket stays public.
+- **Users page** (super admins): list admins with role and tenants, add users with a role and tenant
+  assignments, edit another user's access, reset their password, or delete them. **My account** (everyone):
+  change your own password (requires the current one; wrong guesses count toward the login rate limit). Usernames are
   case-insensitive, 3-50 characters (`a-z 0-9 . _ -`); passwords need at least 12 characters (max 72 bytes,
-  the BCrypt limit). You cannot delete your own account, so at least one admin always remains.
+  the BCrypt limit). You cannot delete your own account or change your own access, so at least one super admin
+  always remains.
 - **Revocation:** each user has a token version that is embedded in their JWTs and checked on every request.
   Deleting a user, resetting their password, or changing your own password signs out their existing sessions
   immediately (when you change your own, your current session gets a fresh token).
@@ -120,18 +130,20 @@ See `frontend-admin/.env.example`.
 Backend (`:8080`)
 
 `/tenants/**`, `/faq/**` and `/users/**` require `Authorization: Bearer <token>`. Errors return `{"message": ...}`.
+**SA** = super admins only; tenant and FAQ endpoints require access to the tenant involved.
 
 | Method | Path | Description |
 |---|---|---|
 | POST | `/auth/login` | `{username, password}` → `{token, expiresAt, username}` (public; 401 bad credentials, 429 rate limited) |
-| GET | `/auth/me` | current user |
-| GET | `/users` | admin users `[{id, username, createdAt}]` |
-| POST | `/users` | `{username, password}` → create user |
-| PUT | `/users/{id}/password` | `{password}` — reset another user's password (signs them out) |
+| GET | `/auth/me` | current user `{id, username, createdAt, role, tenantIds}` |
+| GET | `/users` | **SA** admin users `[{id, username, createdAt, role, tenantIds}]` |
+| POST | `/users` | **SA** `{username, password, role, tenantIds}` → create user |
+| PUT | `/users/{id}/access` | **SA** `{role, tenantIds}` — change another user's access (applies immediately) |
+| PUT | `/users/{id}/password` | **SA** `{password}` — reset another user's password (signs them out) |
 | PUT | `/users/me/password` | `{currentPassword, newPassword}` → fresh `{token, expiresAt, username}` |
-| DELETE | `/users/{id}` | delete another user (signs them out) |
-| POST | `/tenants/create` | `{name}` → tenant |
-| GET | `/tenants/list` | all tenants |
+| DELETE | `/users/{id}` | **SA** delete another user (signs them out) |
+| POST | `/tenants/create` | **SA** `{name}` → tenant |
+| GET | `/tenants/list` | tenants the user can access (all for super admins) |
 | POST | `/faq/create` | `{tenantId, question, answer}` |
 | GET | `/faq/list/{tenantId}` | tenant's FAQs |
 | PUT | `/faq/{id}` | `{question, answer}` |
@@ -150,7 +162,7 @@ AI microservice (`:8081`, `/ai/**` requires `X-API-KEY`)
 
 ## Limitations (template scope)
 
-- One role only: every admin user can manage every tenant and every other admin.
+- Two fixed roles; there are no finer-grained permissions (e.g. read-only access).
 - Login rate limiting is in memory: with several backend instances each counts separately, so use a shared
   store (e.g. Redis) or limit at the load balancer when scaling out.
 - The public chat endpoint does not verify that a widget's `tenantId` belongs to the embedding site.
