@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext.jsx";
 
 export default function LoginPage() {
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const { login } = useAuth();
@@ -10,8 +11,15 @@ export default function LoginPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const ok = await login(password);
-    if (!ok) setError("Invalid password (check VITE_ADMIN_PASSWORD)");
+    setError("");
+    let ok = false;
+    try {
+      ok = await login(username, password);
+    } catch {
+      setError("Cannot reach the backend");
+      return;
+    }
+    if (!ok) setError("Invalid username or password");
     else navigate("/dashboard");
   };
 
@@ -23,7 +31,15 @@ export default function LoginPage() {
       >
         <h1 className="text-xl font-bold mb-4 text-center">Admin Login</h1>
         <input
+          className="border p-2 w-full mb-2 rounded"
+          placeholder="Username"
+          autoComplete="username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+        />
+        <input
           type="password"
+          autoComplete="current-password"
           className="border p-2 w-full mb-2 rounded"
           placeholder="Enter admin password"
           value={password}

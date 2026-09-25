@@ -1,0 +1,22 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:backend;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+
+ai:
+  base-url: http://localhost:0
+  api-key: test
+
+security:
+  jwt:
+    secret: test-secret-that-is-at-least-32-bytes-long
+    ttl: 1h
+  admin:
+    username: admin
+    password: test-password
+  cors:
+    allowed-origins: http://localhost:5173

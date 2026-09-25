@@ -12,7 +12,6 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/faq")
-@CrossOrigin
 public class FaqController {
     private final FaqService service;
 

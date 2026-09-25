@@ -1,24 +1,22 @@
 import { createContext, useContext, useState } from "react";
+import { api, getToken, setToken as storeToken, clearToken } from "../services/api";
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   // Read synchronously so PrivateRoute doesn't redirect to /login on reload before the token is loaded.
-  const [token, setToken] = useState(() => localStorage.getItem("admin_token"));
+  const [token, setToken] = useState(() => getToken());
 
-  const login = async (password) => {
-    const correct = import.meta.env.VITE_ADMIN_PASSWORD || "demo123";
-    if (password === correct) {
-      const fakeToken = "demo-token";
-      localStorage.setItem("admin_token", fakeToken);
-      setToken(fakeToken);
-      return true;
-    }
-    return false;
+  const login = async (username, password) => {
+    const result = await api.login(username, password);
+    if (!result) return false;
+    storeToken(result.token, result.expiresAt);
+    setToken(result.token);
+    return true;
   };
 
   const logout = () => {
-    localStorage.removeItem("admin_token");
+    clearToken();
     setToken(null);
   };
 
