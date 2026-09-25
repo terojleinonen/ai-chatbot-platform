@@ -1,5 +1,7 @@
 # AI Chatbot Platform (Java + React + AI Microservice + Widget)
 
+[![CI](https://github.com/terojleinonen/ai-chatbot-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/terojleinonen/ai-chatbot-platform/actions/workflows/ci.yml)
+
 A multi-tenant FAQ chatbot platform:
 
 - `backend/` — Spring Boot main backend (port 8080): tenants, FAQs, STOMP WebSocket chat
@@ -50,6 +52,18 @@ npx serve widget
 
 Then in the admin panel: create a tenant, add FAQs (or import a CSV with `question,answer` headers),
 and test on the **Chat** page or with the widget (set `tenantId` in `widget/demo.html`).
+
+## Tests and CI
+
+```bash
+cd backend && mvn verify          # unit + integration tests (in-memory H2, AI client mocked)
+cd ai-microservice && mvn verify  # FAQ matcher tests
+cd frontend-admin && npm ci && npm run build
+node --check widget/chat-widget.js
+```
+
+GitHub Actions (`.github/workflows/ci.yml`) runs the same checks on every pull request and on pushes to `main`,
+with Java 17 and Node 22. None of them need Postgres or a running AI service.
 
 ## Authentication
 
