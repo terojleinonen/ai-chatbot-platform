@@ -62,8 +62,31 @@ cd frontend-admin && npm ci && npm run build
 node --check widget/chat-widget.js
 ```
 
-GitHub Actions (`.github/workflows/ci.yml`) runs the same checks on every pull request and on pushes to `main`,
-with Java 17 and Node 22. None of them need Postgres or a running AI service.
+### Browser end-to-end tests (`e2e/`)
+
+Playwright tests drive the admin panel and the widget in Chromium against the real stack: Postgres, both
+services, the built admin panel and the widget demo page. They cover login and sessions, tenants and FAQs, chat
+over WebSocket (including session isolation), the embeddable widget, user management and revocation, per-tenant
+permissions, and login rate limiting. Each test creates its own tenants and users.
+
+```bash
+docker compose up -d --wait                  # fresh database: the admin gets E2E_ADMIN_PASSWORD
+(cd ai-microservice && mvn -DskipTests package)
+(cd backend && mvn -DskipTests package)
+(cd frontend-admin && npm ci && npm run build)
+cd e2e && npm ci && npx playwright install chromium
+CI=1 npx playwright test                     # starts both services, vite preview and the widget page itself
+```
+
+Without `CI`, Playwright reuses servers you already have running on ports 8080, 8081, 5173 and 3000. The backend
+must then run with `ADMIN_PASSWORD=e2e-admin-password` (or set `E2E_ADMIN_PASSWORD` to your admin password) and
+`LOGIN_RATE_LIMIT_WINDOW=10s`. The widget test serves SockJS/STOMP from `e2e/node_modules` instead of jsDelivr.
+
+### CI
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every pull request and on pushes to `main`, with Java 17 and
+Node 22: the Maven tests of both services, the admin panel build, the widget syntax check, and the browser
+end-to-end tests (Postgres via `docker compose`; report and traces uploaded when they fail).
 
 ## Authentication
 

@@ -11,6 +11,10 @@ node_modules/
 dist/
 .vite/
 
+# Playwright (e2e)
+test-results/
+playwright-report/
+
 # IDEs
 .idea/
 .vscode/

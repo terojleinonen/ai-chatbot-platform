@@ -10,9 +10,11 @@
 
     <script src="chat-widget.js"></script>
     <script>
+      // Optional ?tenantId=... (and ?backendUrl=...) to try other tenants without editing this file.
+      const params = new URLSearchParams(location.search);
       ChatWidget.init({
-        backendUrl: "http://localhost:8080",
-        tenantId: 1,
+        backendUrl: params.get("backendUrl") || "http://localhost:8080",
+        tenantId: Number(params.get("tenantId") || 1),
         title: "Support"
       });
     </script>

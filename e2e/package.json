@@ -1,0 +1,13 @@
+{
+  "name": "e2e",
+  "private": true,
+  "description": "Browser end-to-end tests against the full stack (Postgres, both services, admin panel, widget).",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "sockjs-client": "1.6.1",
+    "stompjs": "2.3.3"
+  }
+}
