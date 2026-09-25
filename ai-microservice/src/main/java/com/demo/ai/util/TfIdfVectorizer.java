@@ -52,12 +52,29 @@ public class TfIdfVectorizer {
         return v1.dotProduct(v2) / denom;
     }
 
+    // Common English function words; matching on these makes unrelated questions look similar.
+    private static final Set<String> STOP_WORDS = Set.of(
+            "a", "an", "the", "and", "or", "but", "if", "of", "to", "in", "on", "at", "for", "with",
+            "by", "from", "about", "as", "into", "is", "are", "was", "were", "be", "been", "am",
+            "do", "does", "did", "have", "has", "had", "can", "could", "will", "would", "should",
+            "i", "me", "my", "we", "our", "you", "your", "it", "its", "they", "them", "their",
+            "this", "that", "these", "those", "there", "what", "when", "where", "which", "who",
+            "how", "why", "please", "hi", "hello", "any", "some", "so", "not", "no"
+    );
+
     private String[] tokenize(String text) {
         if (text == null) return new String[0];
-        String cleaned = text.toLowerCase()
-                .replaceAll("[^a-z0-9 ]", " ")
-                .trim();
-        if (cleaned.isEmpty()) return new String[0];
-        return cleaned.split("\\s+");
+        return Arrays.stream(text.toLowerCase().replaceAll("[^a-z0-9 ]", " ").trim().split("\\s+"))
+                .filter(t -> !t.isEmpty() && !STOP_WORDS.contains(t))
+                .map(TfIdfVectorizer::stem)
+                .toArray(String[]::new);
+    }
+
+    /** Very light suffix stripping so "opening"/"open" and "hours"/"hour" match. */
+    static String stem(String word) {
+        if (word.length() > 5 && word.endsWith("ing")) return word.substring(0, word.length() - 3);
+        if (word.length() > 4 && word.endsWith("ed")) return word.substring(0, word.length() - 2);
+        if (word.length() > 3 && word.endsWith("s") && !word.endsWith("ss")) return word.substring(0, word.length() - 1);
+        return word;
     }
 }
