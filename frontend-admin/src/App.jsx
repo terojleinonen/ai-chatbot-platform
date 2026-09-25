@@ -7,9 +7,10 @@ import TenantsPage from "./pages/TenantsPage.jsx";
 import FaqPage from "./pages/FaqPage.jsx";
 import ChatWsPage from "./pages/ChatWsPage.jsx";
 import ImportExportPage from "./pages/ImportExportPage.jsx";
+import UsersPage from "./pages/UsersPage.jsx";
 
 function Layout({ children }) {
-  const { logout } = useAuth();
+  const { logout, username } = useAuth();
   return (
     <div className="min-h-screen flex bg-gray-100">
       <aside className="w-64 bg-slate-900 text-white flex flex-col">
@@ -32,7 +33,13 @@ function Layout({ children }) {
           <Link className="block px-3 py-2 rounded hover:bg-slate-800" to="/import-export">
             Import / Export
           </Link>
+          <Link className="block px-3 py-2 rounded hover:bg-slate-800" to="/users">
+            Users
+          </Link>
         </nav>
+        {username && (
+          <div className="px-4 text-sm text-slate-400">Signed in as {username}</div>
+        )}
         <button
           onClick={logout}
           className="m-4 mt-auto px-3 py-2 bg-red-600 rounded hover:bg-red-500 text-sm"
@@ -60,6 +67,7 @@ export default function App() {
                 <Route path="/faqs" element={<FaqPage />} />
                 <Route path="/chat" element={<ChatWsPage />} />
                 <Route path="/import-export" element={<ImportExportPage />} />
+                <Route path="/users" element={<UsersPage />} />
                 <Route path="*" element={<Dashboard />} />
               </Routes>
             </Layout>

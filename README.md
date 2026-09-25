@@ -61,8 +61,15 @@ The backend uses Spring Security with stateless JWT bearer tokens:
 - Admin users live in the `admin_users` table with BCrypt-hashed passwords. On first start, when the table
   is empty, the backend creates `ADMIN_USERNAME` (default `admin`) with `ADMIN_PASSWORD`. If no password
   is set, it generates one and prints it once in the log (`Created admin user 'admin' with generated password: ...`).
-  Changing `ADMIN_PASSWORD` later does not change an existing user's password.
-- `/tenants/**`, `/faq/**` and `/auth/me` require a token. The chat WebSocket endpoints (`/ws`, `/ws-chat`)
+  Changing `ADMIN_PASSWORD` later does not change an existing user's password; use the **Users** page.
+- **Users page** (admin panel): list admins, add users, reset another user's password, delete users, and change
+  your own password (requires the current one; wrong guesses count toward the login rate limit). Usernames are
+  case-insensitive, 3-50 characters (`a-z 0-9 . _ -`); passwords need at least 12 characters (max 72 bytes,
+  the BCrypt limit). You cannot delete your own account, so at least one admin always remains.
+- **Revocation:** each user has a token version that is embedded in their JWTs and checked on every request.
+  Deleting a user, resetting their password, or changing your own password signs out their existing sessions
+  immediately (when you change your own, your current session gets a fresh token).
+- `/tenants/**`, `/faq/**`, `/users/**` and `/auth/me` require a token. The chat WebSocket endpoints (`/ws`, `/ws-chat`)
   are public, because website visitors use them through the widget.
 - CORS for the REST API is limited to `CORS_ALLOWED_ORIGINS` (comma-separated, default the admin panel's
   `http://localhost:5173`).
@@ -112,12 +119,17 @@ See `frontend-admin/.env.example`.
 
 Backend (`:8080`)
 
-`/tenants/**` and `/faq/**` require `Authorization: Bearer <token>`.
+`/tenants/**`, `/faq/**` and `/users/**` require `Authorization: Bearer <token>`. Errors return `{"message": ...}`.
 
 | Method | Path | Description |
 |---|---|---|
 | POST | `/auth/login` | `{username, password}` → `{token, expiresAt, username}` (public; 401 bad credentials, 429 rate limited) |
 | GET | `/auth/me` | current user |
+| GET | `/users` | admin users `[{id, username, createdAt}]` |
+| POST | `/users` | `{username, password}` → create user |
+| PUT | `/users/{id}/password` | `{password}` — reset another user's password (signs them out) |
+| PUT | `/users/me/password` | `{currentPassword, newPassword}` → fresh `{token, expiresAt, username}` |
+| DELETE | `/users/{id}` | delete another user (signs them out) |
 | POST | `/tenants/create` | `{name}` → tenant |
 | GET | `/tenants/list` | all tenants |
 | POST | `/faq/create` | `{tenantId, question, answer}` |
@@ -138,8 +150,7 @@ AI microservice (`:8081`, `/ai/**` requires `X-API-KEY`)
 
 ## Limitations (template scope)
 
-- One role only: every admin user can manage every tenant. There is no user-management UI or
-  password change yet (add users directly in `admin_users` with a BCrypt hash).
+- One role only: every admin user can manage every tenant and every other admin.
 - Login rate limiting is in memory: with several backend instances each counts separately, so use a shared
   store (e.g. Redis) or limit at the load balancer when scaling out.
 - The public chat endpoint does not verify that a widget's `tenantId` belongs to the embedding site.

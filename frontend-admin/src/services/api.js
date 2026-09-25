@@ -3,6 +3,7 @@ export const WS_URL = import.meta.env.VITE_WS_URL || API_BASE.replace(/^http/, "
 
 const TOKEN_KEY = "admin_token";
 const EXPIRES_KEY = "admin_token_expires";
+const USER_KEY = "admin_username";
 
 export function getToken() {
   const token = localStorage.getItem(TOKEN_KEY);
@@ -14,14 +15,27 @@ export function getToken() {
   return token;
 }
 
-export function setToken(token, expiresAt) {
+export function getUsername() {
+  return localStorage.getItem(USER_KEY);
+}
+
+export function setToken(token, expiresAt, username) {
   localStorage.setItem(TOKEN_KEY, token);
   localStorage.setItem(EXPIRES_KEY, expiresAt);
+  if (username) localStorage.setItem(USER_KEY, username);
 }
 
 export function clearToken() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(EXPIRES_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+
+// Throws an Error carrying the backend's {"message"} for non-2xx responses.
+async function ensureOk(r) {
+  if (r.ok) return r;
+  const body = await r.json().catch(() => ({}));
+  throw new Error(body.message || `Request failed (${r.status})`);
 }
 
 // Authenticated fetch: adds the bearer token and sends the user back to login when it is rejected.
@@ -37,7 +51,8 @@ async function request(path, { json, ...options } = {}) {
   if (r.status === 401) {
     clearToken();
     window.location.assign("/login");
-    throw new Error("Session expired");
+    // The page is being replaced; never settle so callers don't surface unhandled errors.
+    return new Promise(() => {});
   }
   return r;
 }
@@ -84,6 +99,27 @@ export const api = {
   importFaqs: async (tenantId, faqs) => {
     const r = await request(`/faq/import/${tenantId}`, { method: "POST", json: faqs });
     if (!r.ok) throw new Error(`Import failed (${r.status})`);
+    return r.json();
+  },
+  listUsers: async () => {
+    const r = await ensureOk(await request("/users"));
+    return r.json();
+  },
+  createUser: async (username, password) => {
+    const r = await ensureOk(await request("/users", { method: "POST", json: { username, password } }));
+    return r.json();
+  },
+  resetUserPassword: async (id, password) => {
+    await ensureOk(await request(`/users/${id}/password`, { method: "PUT", json: { password } }));
+  },
+  deleteUser: async (id) => {
+    await ensureOk(await request(`/users/${id}`, { method: "DELETE" }));
+  },
+  // Returns a fresh session ({token, expiresAt, username}); the old token stops working.
+  changeMyPassword: async (currentPassword, newPassword) => {
+    const r = await ensureOk(await request("/users/me/password", {
+      method: "PUT", json: { currentPassword, newPassword }
+    }));
     return r.json();
   },
   trainAi: async (tenantId) => {
