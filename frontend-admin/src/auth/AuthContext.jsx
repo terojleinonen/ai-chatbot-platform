@@ -8,11 +8,12 @@ export function AuthProvider({ children }) {
   const [token, setToken] = useState(() => getToken());
 
   const login = async (username, password) => {
+    // Returns null on success, otherwise { error, retryAfterSeconds? }.
     const result = await api.login(username, password);
-    if (!result) return false;
+    if (result.error) return result;
     storeToken(result.token, result.expiresAt);
     setToken(result.token);
-    return true;
+    return null;
   };
 
   const logout = () => {

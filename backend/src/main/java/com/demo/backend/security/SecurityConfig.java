@@ -66,6 +66,7 @@ public class SecurityConfig {
         config.setAllowedOrigins(allowedOrigins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("Authorization", "Content-Type"));
+        config.setExposedHeaders(List.of("Retry-After"));
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         // The SockJS endpoint handles its own CORS (see WebSocketConfig), so only the REST API is listed.
         for (String path : List.of("/auth/**", "/tenants/**", "/faq/**")) {

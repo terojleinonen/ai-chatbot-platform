@@ -18,5 +18,9 @@ security:
   admin:
     username: admin
     password: test-password
+  login-rate-limit:
+    max-failures-per-user-and-ip: 5
+    max-failures-per-ip: 20
+    window: 15m
   cors:
     allowed-origins: http://localhost:5173
