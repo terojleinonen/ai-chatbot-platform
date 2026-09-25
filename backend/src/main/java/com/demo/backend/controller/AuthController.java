@@ -2,6 +2,7 @@ package com.demo.backend.controller;
 
 import com.demo.backend.security.LoginRateLimiter;
 import com.demo.backend.security.TokenService;
+import com.demo.backend.service.UserService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -23,11 +24,14 @@ public class AuthController {
     private final AuthenticationManager authManager;
     private final TokenService tokens;
     private final LoginRateLimiter rateLimiter;
+    private final UserService users;
 
-    public AuthController(AuthenticationManager authManager, TokenService tokens, LoginRateLimiter rateLimiter) {
+    public AuthController(AuthenticationManager authManager, TokenService tokens, LoginRateLimiter rateLimiter,
+                          UserService users) {
         this.authManager = authManager;
         this.tokens = tokens;
         this.rateLimiter = rateLimiter;
+        this.users = users;
     }
 
     public record LoginRequest(String username, String password) {}
@@ -49,9 +53,9 @@ public class AuthController {
             var auth = authManager.authenticate(
                     new UsernamePasswordAuthenticationToken(req.username(), req.password()));
             rateLimiter.recordSuccess(ip, req.username());
-            TokenService.IssuedToken issued = tokens.issue(auth.getName());
+            TokenService.IssuedToken issued = tokens.issue(users.findByUsername(auth.getName()));
             return ResponseEntity.ok(Map.of("token", issued.token(), "expiresAt", issued.expiresAt().toString(),
-                    "username", auth.getName()));
+                    "username", issued.username()));
         } catch (AuthenticationException e) {
             // The attempt reserved by tryAcquire stays counted as a failure.
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)

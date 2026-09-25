@@ -1,6 +1,7 @@
 package com.demo.backend.security;
 
 import com.demo.backend.repository.AdminUserRepository;
+import com.demo.backend.service.UserService;
 import com.nimbusds.jose.jwk.source.ImmutableSecret;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,7 +22,9 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
@@ -69,7 +72,7 @@ public class SecurityConfig {
         config.setExposedHeaders(List.of("Retry-After"));
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         // The SockJS endpoint handles its own CORS (see WebSocketConfig), so only the REST API is listed.
-        for (String path : List.of("/auth/**", "/tenants/**", "/faq/**")) {
+        for (String path : List.of("/auth/**", "/tenants/**", "/faq/**", "/users/**")) {
             source.registerCorsConfiguration(path, config);
         }
         return source;
@@ -82,7 +85,7 @@ public class SecurityConfig {
 
     @Bean
     UserDetailsService userDetailsService(AdminUserRepository users) {
-        return username -> users.findByUsername(username)
+        return username -> users.findByUsername(UserService.normalizeUsername(username))
                 .map(u -> User.withUsername(u.getUsername()).password(u.getPasswordHash()).roles("ADMIN").build())
                 .orElseThrow(() -> new UsernameNotFoundException(username));
     }
@@ -117,7 +120,11 @@ public class SecurityConfig {
     }
 
     @Bean
-    JwtDecoder jwtDecoder(SecretKey jwtSigningKey) {
-        return NimbusJwtDecoder.withSecretKey(jwtSigningKey).macAlgorithm(MacAlgorithm.HS256).build();
+    JwtDecoder jwtDecoder(SecretKey jwtSigningKey, AdminUserRepository users) {
+        NimbusJwtDecoder decoder = NimbusJwtDecoder.withSecretKey(jwtSigningKey).macAlgorithm(MacAlgorithm.HS256).build();
+        // Standard checks (expiry etc.) plus: the user still exists and the token predates no password change.
+        decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
+                JwtValidators.createDefault(), new TokenVersionValidator(users)));
+        return decoder;
     }
 }

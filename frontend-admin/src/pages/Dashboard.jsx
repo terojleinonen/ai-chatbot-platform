@@ -11,6 +11,7 @@ export default function Dashboard() {
         <li><b>FAQs</b> – define what the bot can answer.</li>
         <li><b>Chat (WebSocket)</b> – test real-time bot responses.</li>
         <li><b>Import / Export</b> – bulk manage FAQ data.</li>
+        <li><b>Users</b> – manage admin accounts and change your password.</li>
       </ul>
     </div>
   );

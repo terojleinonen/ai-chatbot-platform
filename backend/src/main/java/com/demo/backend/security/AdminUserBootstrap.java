@@ -2,6 +2,7 @@ package com.demo.backend.security;
 
 import com.demo.backend.entity.AdminUser;
 import com.demo.backend.repository.AdminUserRepository;
+import com.demo.backend.service.UserService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -31,7 +32,7 @@ public class AdminUserBootstrap implements ApplicationRunner {
                               @Value("${security.admin.password:}") String password) {
         this.users = users;
         this.encoder = encoder;
-        this.username = username;
+        this.username = UserService.normalizeUsername(username);
         this.password = password;
     }
 
