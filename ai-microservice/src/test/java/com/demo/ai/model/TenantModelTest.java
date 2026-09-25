@@ -21,6 +21,16 @@ class TenantModelTest {
     }
 
     @Test
+    void matchesWordForms() {
+        assertEquals("9-17 on weekdays.", model.getBestAnswer("when are you open"));
+    }
+
+    @Test
+    void doesNotMatchOnStopWordsAlone() {
+        assertEquals("I'm not sure yet. Could you rephrase your question?", model.getBestAnswer("do you have what I need"));
+    }
+
+    @Test
     void fallsBackWhenNothingMatches() {
         assertEquals("I'm not sure yet. Could you rephrase your question?", model.getBestAnswer("banana"));
         assertEquals("I'm not sure yet. Could you rephrase your question?", model.getBestAnswer("   "));

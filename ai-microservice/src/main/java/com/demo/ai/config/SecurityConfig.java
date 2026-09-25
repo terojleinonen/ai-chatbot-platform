@@ -8,7 +8,7 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class SecurityConfig {
     @Bean
-    public FilterRegistrationBean<ApiKeyFilter> apiKeyFilter(ApiKeyFilter filter) {
+    public FilterRegistrationBean<ApiKeyFilter> apiKeyFilterRegistration(ApiKeyFilter filter) {
         FilterRegistrationBean<ApiKeyFilter> reg = new FilterRegistrationBean<>();
         reg.setFilter(filter);
         reg.addUrlPatterns("/ai/*");
