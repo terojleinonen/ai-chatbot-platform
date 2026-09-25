@@ -10,6 +10,7 @@ export default function FaqPage() {
   const [editing, setEditing] = useState(null);
   const [editQ, setEditQ] = useState("");
   const [editA, setEditA] = useState("");
+  const [status, setStatus] = useState("");
 
   useEffect(() => { api.listTenants().then(setTenants); }, []);
 
@@ -39,6 +40,15 @@ export default function FaqPage() {
     loadFaqs();
   };
 
+  const retrain = async () => {
+    setStatus("Training...");
+    try {
+      setStatus(await api.trainAi(tenantId));
+    } catch (err) {
+      setStatus(err.message);
+    }
+  };
+
   const deleteFaq = async (id) => {
     if (!window.confirm("Delete this FAQ?")) return;
     await api.deleteFaq(id);
@@ -60,6 +70,12 @@ export default function FaqPage() {
             <option key={t.id} value={t.id}>{t.name}</option>
           ))}
         </select>
+        {tenantId && (
+          <button className="bg-green-600 text-white px-3 py-2 rounded" onClick={retrain}>
+            Retrain AI
+          </button>
+        )}
+        {status && <span className="text-sm text-gray-600">{status}</span>}
       </div>
       {tenantId && (
         <>

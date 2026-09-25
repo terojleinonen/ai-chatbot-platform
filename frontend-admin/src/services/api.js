@@ -1,4 +1,5 @@
-const API_BASE = "http://localhost:8080";
+export const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8080";
+export const WS_URL = import.meta.env.VITE_WS_URL || API_BASE.replace(/^http/, "ws") + "/ws";
 
 export const api = {
   listTenants: async () => {
@@ -36,15 +37,20 @@ export const api = {
   deleteFaq: async (id) => {
     await fetch(`${API_BASE}/faq/${id}`, { method: "DELETE" });
   },
-  trainAi: async (tenantId, faqs) => {
-    const r = await fetch(`http://localhost:8081/ai/train/${tenantId}`, {
+  // Replaces all FAQs of the tenant with the given rows and retrains the AI.
+  importFaqs: async (tenantId, faqs) => {
+    const r = await fetch(`${API_BASE}/faq/import/${tenantId}`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-API-KEY": "MY_INTERNAL_AI_KEY"
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(faqs)
     });
-    return r.text();
+    if (!r.ok) throw new Error(`Import failed (${r.status})`);
+    return r.json();
+  },
+  trainAi: async (tenantId) => {
+    const r = await fetch(`${API_BASE}/faq/train/${tenantId}`, { method: "POST" });
+    const body = await r.json();
+    if (!r.ok) throw new Error(body.message || `Training failed (${r.status})`);
+    return body.message;
   }
 };

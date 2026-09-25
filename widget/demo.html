@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Chat Widget Demo</title>
+  </head>
+  <body>
+    <h1>Chat widget demo</h1>
+    <p>Serve this folder (e.g. <code>npx serve widget</code>) and click the bubble in the corner.</p>
+
+    <script src="chat-widget.js"></script>
+    <script>
+      ChatWidget.init({
+        backendUrl: "http://localhost:8080",
+        tenantId: 1,
+        title: "Support"
+      });
+    </script>
+  </body>
+</html>

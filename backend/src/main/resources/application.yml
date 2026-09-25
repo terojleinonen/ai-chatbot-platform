@@ -1,11 +1,16 @@
 server:
-  port: 8080
+  port: ${PORT:8080}
 
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/main_backend
-    username: user
-    password: pass
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/main_backend}
+    username: ${DB_USER:user}
+    password: ${DB_PASSWORD:pass}
   jpa:
     hibernate:
       ddl-auto: update
+
+ai:
+  base-url: ${AI_BASE_URL:http://localhost:8081}
+  # Must match security.api-key in the ai-microservice.
+  api-key: ${AI_API_KEY:MY_INTERNAL_AI_KEY}

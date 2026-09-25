@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Client } from "@stomp/stompjs";
-import { api } from "../services/api";
+import { api, WS_URL } from "../services/api";
 
 export default function ChatWsPage() {
   const [tenants, setTenants] = useState([]);
@@ -14,14 +14,12 @@ export default function ChatWsPage() {
 
   useEffect(() => {
     const client = new Client({
-      brokerURL: "ws://localhost:8080/ws-chat",
+      brokerURL: WS_URL,
       reconnectDelay: 5000,
       onConnect: () => {
-        client.subscribe("/topic/replies", (msg) => {
+        client.subscribe(`/topic/replies/${sessionIdRef.current}`, (msg) => {
           const body = JSON.parse(msg.body);
-          if (body.sessionId === sessionIdRef.current) {
-            setMessages(prev => [...prev, { from: "bot", text: body.reply }]);
-          }
+          setMessages(prev => [...prev, { from: "bot", text: body.reply }]);
         });
       }
     });
@@ -31,7 +29,7 @@ export default function ChatWsPage() {
   }, []);
 
   const send = () => {
-    if (!input || !tenantId || !clientRef.current) return;
+    if (!input || !tenantId || !clientRef.current?.connected) return;
     const payload = {
       sessionId: sessionIdRef.current,
       tenantId: Number(tenantId),
@@ -81,6 +79,7 @@ export default function ChatWsPage() {
           placeholder="Type a message..."
           value={input}
           onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") send(); }}
         />
         <button className="bg-green-600 text-white px-4 py-2 rounded" onClick={send}>
           Send

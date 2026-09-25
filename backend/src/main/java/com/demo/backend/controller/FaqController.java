@@ -2,9 +2,13 @@ package com.demo.backend.controller;
 
 import com.demo.backend.entity.Faq;
 import com.demo.backend.service.FaqService;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/faq")
@@ -32,11 +36,25 @@ public class FaqController {
             f.setQuestion(updates.getQuestion());
             f.setAnswer(updates.getAnswer());
             return service.create(f);
-        }).orElseThrow();
+        }).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "FAQ not found"));
     }
 
     @DeleteMapping("/{id}")
     public void delete(@PathVariable Long id) {
         service.delete(id);
+    }
+
+    @PostMapping("/import/{tenantId}")
+    public List<Faq> importFaqs(@PathVariable Long tenantId, @RequestBody List<Faq> faqs) {
+        return service.replaceAll(tenantId, faqs);
+    }
+
+    @PostMapping("/train/{tenantId}")
+    public Map<String, String> train(@PathVariable Long tenantId) {
+        try {
+            return Map.of("message", service.train(tenantId));
+        } catch (RestClientException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "AI service unavailable: " + e.getMessage());
+        }
     }
 }

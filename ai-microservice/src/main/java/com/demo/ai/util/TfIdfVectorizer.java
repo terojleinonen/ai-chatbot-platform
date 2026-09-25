@@ -9,23 +9,30 @@ import java.util.stream.Collectors;
 public class TfIdfVectorizer {
     private final List<String> vocabulary = new ArrayList<>();
     private final Map<String, Integer> wordToIndex = new HashMap<>();
+    private double[] idf = new double[0];
 
     public void fit(List<String> documents) {
-        Set<String> vocabSet = new HashSet<>();
+        Map<String, Integer> docFreq = new HashMap<>();
         for (String doc : documents) {
-            String[] tokens = tokenize(doc);
-            vocabSet.addAll(Arrays.asList(tokens));
+            for (String token : new HashSet<>(Arrays.asList(tokenize(doc)))) {
+                docFreq.merge(token, 1, Integer::sum);
+            }
         }
         vocabulary.clear();
-        vocabulary.addAll(vocabSet);
+        vocabulary.addAll(docFreq.keySet());
         wordToIndex.clear();
+        idf = new double[vocabulary.size()];
+        int n = documents.size();
         for (int i = 0; i < vocabulary.size(); i++) {
-            wordToIndex.put(vocabulary.get(i), i);
+            String word = vocabulary.get(i);
+            wordToIndex.put(word, i);
+            // Smoothed IDF (same formula as scikit-learn): ln((1 + n) / (1 + df)) + 1
+            idf[i] = Math.log((1.0 + n) / (1.0 + docFreq.get(word))) + 1.0;
         }
     }
 
     public RealVector transform(String doc) {
-        double[] tf = new double[vocabulary.size()];
+        double[] tfidf = new double[vocabulary.size()];
         String[] tokens = tokenize(doc);
         Map<String, Long> counts = Arrays.stream(tokens)
                 .collect(Collectors.groupingBy(w -> w, Collectors.counting()));
@@ -33,10 +40,10 @@ public class TfIdfVectorizer {
         for (Map.Entry<String, Long> e : counts.entrySet()) {
             Integer idx = wordToIndex.get(e.getKey());
             if (idx != null) {
-                tf[idx] = e.getValue();
+                tfidf[idx] = e.getValue() * idf[idx];
             }
         }
-        return new ArrayRealVector(tf);
+        return new ArrayRealVector(tfidf);
     }
 
     public double cosineSimilarity(RealVector v1, RealVector v2) {
@@ -46,9 +53,11 @@ public class TfIdfVectorizer {
     }
 
     private String[] tokenize(String text) {
-        return text.toLowerCase()
+        if (text == null) return new String[0];
+        String cleaned = text.toLowerCase()
                 .replaceAll("[^a-z0-9 ]", " ")
-                .trim()
-                .split("\s+");
+                .trim();
+        if (cleaned.isEmpty()) return new String[0];
+        return cleaned.split("\\s+");
     }
 }

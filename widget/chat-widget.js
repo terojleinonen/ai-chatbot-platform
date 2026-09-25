@@ -1,12 +1,17 @@
 (function () {
   let config = {};
   let stompClient = null;
-  let sessionId = crypto.randomUUID();
+  let sessionId = (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : Date.now().toString(36) + Math.random().toString(36).slice(2);
+  // Resolve chat-widget.css next to this script, not relative to the host page.
+  const scriptSrc = document.currentScript ? document.currentScript.src : "";
+  const cssUrl = scriptSrc ? new URL("chat-widget.css", scriptSrc).href : "chat-widget.css";
 
   function createUI() {
     const link = document.createElement("link");
     link.rel = "stylesheet";
-    link.href = "chat-widget.css";
+    link.href = config.cssUrl || cssUrl;
     document.head.appendChild(link);
 
     const container = document.createElement("div");
@@ -15,7 +20,7 @@
     container.innerHTML = `
         <div id="cw-bubble">💬</div>
         <div id="cw-window" style="display:none;">
-            <div id="cw-header">AI Chatbot</div>
+            <div id="cw-header"></div>
             <div id="cw-messages"></div>
             <div id="cw-input-bar">
                 <input id="cw-input" placeholder="Type a message..." />
@@ -25,6 +30,7 @@
     `;
 
     document.body.appendChild(container);
+    document.getElementById("cw-header").innerText = config.title || "AI Chatbot";
 
     const bubble = document.getElementById("cw-bubble");
     const win = document.getElementById("cw-window");
@@ -42,14 +48,16 @@
   function connectWs() {
     const socket = new SockJS(config.backendUrl + "/ws-chat");
     stompClient = Stomp.over(socket);
+    stompClient.debug = null;
 
     stompClient.connect({}, () => {
-      stompClient.subscribe("/topic/replies", (msg) => {
+      stompClient.subscribe("/topic/replies/" + sessionId, (msg) => {
         const body = JSON.parse(msg.body);
-        if (body.sessionId === sessionId) {
-          addMessage(body.reply, "bot");
-        }
+        addMessage(body.reply, "bot");
       });
+    }, () => {
+      // Connection lost: retry after a short delay.
+      setTimeout(connectWs, 5000);
     });
   }
 
@@ -70,21 +78,29 @@
 
     addMessage(message, "user");
 
-    stompClient.publish({
-      destination: "/app/chat.send",
-      body: JSON.stringify({
-        sessionId: sessionId,
-        tenantId: config.tenantId,
-        content: message
-      }),
-    });
+    // stompjs 2.x API: send(destination, headers, body)
+    stompClient.send("/app/chat.send", {}, JSON.stringify({
+      sessionId: sessionId,
+      tenantId: Number(config.tenantId),
+      content: message
+    }));
 
     input.value = "";
   }
 
   window.ChatWidget = {
+    /**
+     * cfg.backendUrl  - base URL of the backend, e.g. "http://localhost:8080" (required)
+     * cfg.tenantId    - tenant ID from the admin panel (required)
+     * cfg.title       - header text (optional)
+     * cfg.cssUrl      - custom stylesheet URL (optional)
+     */
     init: function (cfg) {
-      config = cfg;
+      config = cfg || {};
+      if (!config.backendUrl || !config.tenantId) {
+        console.error("ChatWidget.init requires backendUrl and tenantId");
+        return;
+      }
       createUI();
 
       const script = document.createElement("script");

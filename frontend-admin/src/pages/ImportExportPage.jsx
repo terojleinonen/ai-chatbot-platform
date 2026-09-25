@@ -19,17 +19,28 @@ export default function ImportExportPage() {
     a.href = url;
     a.download = `tenant-${tenantId}-faqs.csv`;
     a.click();
+    URL.revokeObjectURL(url);
   };
 
   const handleFile = (e) => {
     const file = e.target.files[0];
     if (!file || !tenantId) return;
+    e.target.value = "";
     Papa.parse(file, {
       header: true,
+      skipEmptyLines: true,
       complete: async (results) => {
-        const rows = results.data.filter(r => r.question && r.answer);
-        await api.trainAi(tenantId, rows);
-        alert(`Imported & trained ${rows.length} FAQs.`);
+        const rows = results.data
+          .filter(r => r.question && r.answer)
+          .map(r => ({ question: r.question, answer: r.answer }));
+        if (!window.confirm(`Replace all FAQs of this tenant with ${rows.length} imported rows?`)) return;
+        try {
+          const saved = await api.importFaqs(Number(tenantId), rows);
+          setFaqs(saved);
+          alert(`Imported & trained ${saved.length} FAQs.`);
+        } catch (err) {
+          alert(err.message);
+        }
       }
     });
   };
@@ -70,7 +81,8 @@ export default function ImportExportPage() {
             </label>
           </div>
           <p className="text-sm text-gray-600">
-            CSV format: <code>question,answer</code> headers.
+            CSV format: <code>question,answer</code> headers. Importing replaces
+            the tenant's existing FAQs. Currently {faqs.length} FAQs.
           </p>
         </>
       )}
