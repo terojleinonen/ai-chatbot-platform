@@ -3,6 +3,9 @@ spring:
     url: jdbc:h2:mem:backend;DB_CLOSE_DELAY=-1
     username: sa
     password:
+  # Tests use in-memory H2; the Flyway migrations (PostgreSQL SQL) are exercised by the e2e tests.
+  flyway:
+    enabled: false
   jpa:
     hibernate:
       ddl-auto: create-drop

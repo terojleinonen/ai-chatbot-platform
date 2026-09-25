@@ -8,9 +8,15 @@ spring:
     url: ${DB_URL}
     username: ${DB_USER}
     password: ${DB_PASSWORD}
+  # Schema changes are Flyway migrations (src/main/resources/db/migration); Hibernate only validates.
+  flyway:
+    # Databases created before Flyway (by Hibernate) are adopted as version 1 without re-running V1.
+    baseline-on-migrate: true
+    baseline-version: 1
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
+    open-in-view: false
 
 security:
   # Only the dev profile may use the built-in dev API key.
