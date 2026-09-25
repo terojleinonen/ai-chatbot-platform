@@ -1,6 +1,7 @@
 package com.demo.backend.security;
 
 import com.demo.backend.entity.AdminUser;
+import com.demo.backend.entity.Role;
 import com.demo.backend.repository.AdminUserRepository;
 import com.demo.backend.service.UserService;
 import org.slf4j.Logger;
@@ -49,6 +50,6 @@ public class AdminUserBootstrap implements ApplicationRunner {
         } else {
             log.info("Created admin user '{}' from ADMIN_PASSWORD", username);
         }
-        users.save(new AdminUser(username, encoder.encode(initial)));
+        users.save(new AdminUser(username, encoder.encode(initial), Role.SUPER_ADMIN));
     }
 }

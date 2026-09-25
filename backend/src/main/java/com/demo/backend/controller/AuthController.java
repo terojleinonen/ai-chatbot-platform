@@ -1,5 +1,6 @@
 package com.demo.backend.controller;
 
+import com.demo.backend.entity.AdminUser;
 import com.demo.backend.security.LoginRateLimiter;
 import com.demo.backend.security.TokenService;
 import com.demo.backend.service.UserService;
@@ -53,9 +54,10 @@ public class AuthController {
             var auth = authManager.authenticate(
                     new UsernamePasswordAuthenticationToken(req.username(), req.password()));
             rateLimiter.recordSuccess(ip, req.username());
-            TokenService.IssuedToken issued = tokens.issue(users.findByUsername(auth.getName()));
+            AdminUser user = users.findByUsername(auth.getName());
+            TokenService.IssuedToken issued = tokens.issue(user);
             return ResponseEntity.ok(Map.of("token", issued.token(), "expiresAt", issued.expiresAt().toString(),
-                    "username", issued.username()));
+                    "username", issued.username(), "role", user.getRole()));
         } catch (AuthenticationException e) {
             // The attempt reserved by tryAcquire stays counted as a failure.
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
@@ -63,8 +65,9 @@ public class AuthController {
         }
     }
 
+    /** The signed-in user, including current role and tenant assignments (read fresh from the database). */
     @GetMapping("/me")
-    public Map<String, Object> me(@AuthenticationPrincipal Jwt jwt) {
-        return Map.of("username", jwt.getSubject(), "expiresAt", jwt.getExpiresAt().toString());
+    public UserController.UserDto me(@AuthenticationPrincipal Jwt jwt) {
+        return UserController.UserDto.of(users.findByUsername(jwt.getSubject()));
     }
 }

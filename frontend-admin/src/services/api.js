@@ -4,6 +4,7 @@ export const WS_URL = import.meta.env.VITE_WS_URL || API_BASE.replace(/^http/, "
 const TOKEN_KEY = "admin_token";
 const EXPIRES_KEY = "admin_token_expires";
 const USER_KEY = "admin_username";
+const ROLE_KEY = "admin_role";
 
 export function getToken() {
   const token = localStorage.getItem(TOKEN_KEY);
@@ -19,6 +20,14 @@ export function getUsername() {
   return localStorage.getItem(USER_KEY);
 }
 
+export function getRole() {
+  return localStorage.getItem(ROLE_KEY);
+}
+
+export function setRole(role) {
+  if (role) localStorage.setItem(ROLE_KEY, role);
+}
+
 export function setToken(token, expiresAt, username) {
   localStorage.setItem(TOKEN_KEY, token);
   localStorage.setItem(EXPIRES_KEY, expiresAt);
@@ -29,6 +38,7 @@ export function clearToken() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(EXPIRES_KEY);
   localStorage.removeItem(USER_KEY);
+  localStorage.removeItem(ROLE_KEY);
 }
 
 // Throws an Error carrying the backend's {"message"} for non-2xx responses.
@@ -72,12 +82,17 @@ export const api = {
     if (!r.ok) return { error: "invalid_credentials" };
     return body;
   },
+  // Current user with fresh role and tenant assignments.
+  getMe: async () => {
+    const r = await ensureOk(await request("/auth/me"));
+    return r.json();
+  },
   listTenants: async () => {
     const r = await request("/tenants/list");
     return r.json();
   },
   createTenant: async (name) => {
-    const r = await request("/tenants/create", { method: "POST", json: { name } });
+    const r = await ensureOk(await request("/tenants/create", { method: "POST", json: { name } }));
     return r.json();
   },
   getFaqs: async (tenantId) => {
@@ -105,8 +120,14 @@ export const api = {
     const r = await ensureOk(await request("/users"));
     return r.json();
   },
-  createUser: async (username, password) => {
-    const r = await ensureOk(await request("/users", { method: "POST", json: { username, password } }));
+  createUser: async (username, password, role, tenantIds) => {
+    const r = await ensureOk(await request("/users", {
+      method: "POST", json: { username, password, role, tenantIds }
+    }));
+    return r.json();
+  },
+  updateUserAccess: async (id, role, tenantIds) => {
+    const r = await ensureOk(await request(`/users/${id}/access`, { method: "PUT", json: { role, tenantIds } }));
     return r.json();
   },
   resetUserPassword: async (id, password) => {

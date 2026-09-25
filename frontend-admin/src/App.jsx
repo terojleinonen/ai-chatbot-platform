@@ -1,4 +1,4 @@
-import { Routes, Route, Link } from "react-router-dom";
+import { Routes, Route, Link, Navigate } from "react-router-dom";
 import PrivateRoute from "./auth/PrivateRoute.jsx";
 import { useAuth } from "./auth/AuthContext.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
@@ -8,9 +8,12 @@ import FaqPage from "./pages/FaqPage.jsx";
 import ChatWsPage from "./pages/ChatWsPage.jsx";
 import ImportExportPage from "./pages/ImportExportPage.jsx";
 import UsersPage from "./pages/UsersPage.jsx";
+import AccountPage from "./pages/AccountPage.jsx";
+
+const ROLE_LABELS = { SUPER_ADMIN: "Super admin", TENANT_ADMIN: "Tenant admin" };
 
 function Layout({ children }) {
-  const { logout, username } = useAuth();
+  const { logout, username, role, isSuperAdmin } = useAuth();
   return (
     <div className="min-h-screen flex bg-gray-100">
       <aside className="w-64 bg-slate-900 text-white flex flex-col">
@@ -33,12 +36,20 @@ function Layout({ children }) {
           <Link className="block px-3 py-2 rounded hover:bg-slate-800" to="/import-export">
             Import / Export
           </Link>
-          <Link className="block px-3 py-2 rounded hover:bg-slate-800" to="/users">
-            Users
+          {isSuperAdmin && (
+            <Link className="block px-3 py-2 rounded hover:bg-slate-800" to="/users">
+              Users
+            </Link>
+          )}
+          <Link className="block px-3 py-2 rounded hover:bg-slate-800" to="/account">
+            My account
           </Link>
         </nav>
         {username && (
-          <div className="px-4 text-sm text-slate-400">Signed in as {username}</div>
+          <div className="px-4 text-sm text-slate-400">
+            Signed in as {username}
+            {role && <div className="text-xs">{ROLE_LABELS[role] || role}</div>}
+          </div>
         )}
         <button
           onClick={logout}
@@ -50,6 +61,12 @@ function Layout({ children }) {
       <main className="flex-1 p-6">{children}</main>
     </div>
   );
+}
+
+function SuperAdminOnly({ children }) {
+  const { role, isSuperAdmin } = useAuth();
+  if (role && !isSuperAdmin) return <Navigate to="/dashboard" replace />;
+  return children;
 }
 
 export default function App() {
@@ -67,7 +84,8 @@ export default function App() {
                 <Route path="/faqs" element={<FaqPage />} />
                 <Route path="/chat" element={<ChatWsPage />} />
                 <Route path="/import-export" element={<ImportExportPage />} />
-                <Route path="/users" element={<UsersPage />} />
+                <Route path="/users" element={<SuperAdminOnly><UsersPage /></SuperAdminOnly>} />
+                <Route path="/account" element={<AccountPage />} />
                 <Route path="*" element={<Dashboard />} />
               </Routes>
             </Layout>
