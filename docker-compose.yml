@@ -11,6 +11,12 @@ services:
     volumes:
       - ./docker/init-databases.sql:/docker-entrypoint-initdb.d/init-databases.sql:ro
       - pgdata:/var/lib/postgresql/data
+    # Healthy once the second database exists, i.e. after the init script ran (`docker compose up -d --wait`).
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "user", "-d", "ai_microservice"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
 
 volumes:
   pgdata:
