@@ -33,6 +33,7 @@ module.exports = defineConfig({
       url: "http://localhost:8081/health",
       reuseExistingServer: !CI,
       timeout: 120_000,
+      env: { SPRING_PROFILES_ACTIVE: "dev" },
     },
     {
       command: "java -jar target/backend-0.0.1-SNAPSHOT.jar",
@@ -41,6 +42,7 @@ module.exports = defineConfig({
       reuseExistingServer: !CI,
       timeout: 120_000,
       env: {
+        SPRING_PROFILES_ACTIVE: "dev",
         ADMIN_PASSWORD: process.env.E2E_ADMIN_PASSWORD,
         JWT_SECRET: "e2e-jwt-secret-that-is-at-least-32-bytes",
         LOGIN_RATE_LIMIT_WINDOW: `${process.env.E2E_RATE_LIMIT_WINDOW_SECONDS}s`,

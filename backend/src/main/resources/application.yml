@@ -1,24 +1,29 @@
+# Production configuration: every credential must come from the environment (no defaults).
+# For local development run with SPRING_PROFILES_ACTIVE=dev, which supplies safe-for-dev defaults
+# (see application-dev.yml).
 server:
   port: ${PORT:8080}
 
 spring:
   datasource:
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/main_backend}
-    username: ${DB_USER:user}
-    password: ${DB_PASSWORD:pass}
+    url: ${DB_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: update
 
 ai:
   base-url: ${AI_BASE_URL:http://localhost:8081}
-  # Must match security.api-key in the ai-microservice.
-  api-key: ${AI_API_KEY:MY_INTERNAL_AI_KEY}
+  # Must match security.api-key in the ai-microservice. At least 32 characters.
+  api-key: ${AI_API_KEY}
 
 security:
+  # Only the dev profile may use the built-in dev secrets or a random JWT key.
+  dev-mode: false
   jwt:
-    # HS256 signing key, at least 32 characters. If unset, a random key is used (tokens die on restart).
-    secret: ${JWT_SECRET:}
+    # HS256 signing key, at least 32 characters.
+    secret: ${JWT_SECRET}
     ttl: ${JWT_TTL:8h}
   admin:
     # First admin account, created only when no admin users exist yet.
@@ -31,4 +36,5 @@ security:
     max-failures-per-ip: ${LOGIN_MAX_FAILURES_PER_IP:20}
     window: ${LOGIN_RATE_LIMIT_WINDOW:15m}
   cors:
-    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+    # Admin panel origin(s), comma-separated, e.g. https://admin.example.com
+    allowed-origins: ${CORS_ALLOWED_ORIGINS}

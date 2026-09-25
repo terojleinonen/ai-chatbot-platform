@@ -1,15 +1,19 @@
+# Production configuration: every credential must come from the environment (no defaults).
+# For local development run with SPRING_PROFILES_ACTIVE=dev (see application-dev.yml).
 server:
   port: ${PORT:8081}
 
 spring:
   datasource:
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/ai_microservice}
-    username: ${DB_USER:user}
-    password: ${DB_PASSWORD:pass}
+    url: ${DB_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: update
 
 security:
-  # Shared secret the main backend sends in the X-API-KEY header.
-  api-key: ${AI_API_KEY:MY_INTERNAL_AI_KEY}
+  # Only the dev profile may use the built-in dev API key.
+  dev-mode: false
+  # Shared secret the main backend sends in the X-API-KEY header. At least 32 characters.
+  api-key: ${AI_API_KEY}

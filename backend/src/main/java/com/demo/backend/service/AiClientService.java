@@ -1,6 +1,7 @@
 package com.demo.backend.service;
 
 import com.demo.backend.entity.Faq;
+import com.demo.backend.security.SecretChecks;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,9 +22,10 @@ public class AiClientService {
     private final String apiKey;
 
     public AiClientService(@Value("${ai.base-url}") String aiBaseUrl,
-                           @Value("${ai.api-key}") String apiKey) {
+                           @Value("${ai.api-key}") String apiKey,
+                           @Value("${security.dev-mode:false}") boolean devMode) {
         this.aiBaseUrl = aiBaseUrl;
-        this.apiKey = apiKey;
+        this.apiKey = SecretChecks.requireStrong("AI_API_KEY", apiKey, devMode);
     }
 
     public String askAi(Long tenantId, String message) {

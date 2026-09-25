@@ -9,7 +9,7 @@ spring:
 
 ai:
   base-url: http://localhost:0
-  api-key: test
+  api-key: test-ai-key-that-is-at-least-32-characters
 
 security:
   jwt:

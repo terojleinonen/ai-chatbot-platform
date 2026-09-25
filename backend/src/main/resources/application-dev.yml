@@ -1,0 +1,17 @@
+# Local development defaults (SPRING_PROFILES_ACTIVE=dev). Never use this profile in production.
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/main_backend}
+    username: ${DB_USER:user}
+    password: ${DB_PASSWORD:pass}
+
+ai:
+  api-key: ${AI_API_KEY:dev-only-insecure-ai-key-do-not-use-in-production}
+
+security:
+  dev-mode: true
+  jwt:
+    # Empty: a random key is generated at startup (tokens are invalidated on restart).
+    secret: ${JWT_SECRET:}
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
