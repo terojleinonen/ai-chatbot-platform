@@ -14,3 +14,16 @@ ai:
   base-url: ${AI_BASE_URL:http://localhost:8081}
   # Must match security.api-key in the ai-microservice.
   api-key: ${AI_API_KEY:MY_INTERNAL_AI_KEY}
+
+security:
+  jwt:
+    # HS256 signing key, at least 32 characters. If unset, a random key is used (tokens die on restart).
+    secret: ${JWT_SECRET:}
+    ttl: ${JWT_TTL:8h}
+  admin:
+    # First admin account, created only when no admin users exist yet.
+    username: ${ADMIN_USERNAME:admin}
+    # If unset, a random password is generated and printed to the log once.
+    password: ${ADMIN_PASSWORD:}
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}

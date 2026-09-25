@@ -8,7 +8,6 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/tenants")
-@CrossOrigin
 public class TenantController {
     private final TenantService service;
 

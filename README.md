@@ -38,10 +38,10 @@ docker compose up -d
 # 2. AI microservice
 cd ai-microservice && mvn spring-boot:run
 
-# 3. Backend
-cd backend && mvn spring-boot:run
+# 3. Backend (the first start creates the admin user; see "Authentication")
+cd backend && ADMIN_PASSWORD=change-me mvn spring-boot:run
 
-# 4. Admin panel → http://localhost:5173 (password: demo123)
+# 4. Admin panel → http://localhost:5173 (log in as admin / change-me)
 cd frontend-admin && npm install && npm run dev
 
 # 5. Widget demo → open http://localhost:3000/demo.html
@@ -51,6 +51,27 @@ npx serve widget
 Then in the admin panel: create a tenant, add FAQs (or import a CSV with `question,answer` headers),
 and test on the **Chat** page or with the widget (set `tenantId` in `widget/demo.html`).
 
+## Authentication
+
+The backend uses Spring Security with stateless JWT bearer tokens:
+
+- `POST /auth/login` with `{"username", "password"}` returns `{token, expiresAt, username}`.
+  Send it as `Authorization: Bearer <token>` on every admin API call. Tokens are HS256-signed and
+  expire after `JWT_TTL` (default 8h).
+- Admin users live in the `admin_users` table with BCrypt-hashed passwords. On first start, when the table
+  is empty, the backend creates `ADMIN_USERNAME` (default `admin`) with `ADMIN_PASSWORD`. If no password
+  is set, it generates one and prints it once in the log (`Created admin user 'admin' with generated password: ...`).
+  Changing `ADMIN_PASSWORD` later does not change an existing user's password.
+- `/tenants/**`, `/faq/**` and `/auth/me` require a token. The chat WebSocket endpoints (`/ws`, `/ws-chat`)
+  are public, because website visitors use them through the widget.
+- CORS for the REST API is limited to `CORS_ALLOWED_ORIGINS` (comma-separated, default the admin panel's
+  `http://localhost:5173`).
+- Set `JWT_SECRET` (32+ characters) anywhere beyond local development. Without it the backend signs with a
+  random key, so every restart logs everyone out.
+
+The admin panel stores the token in `localStorage`, attaches it to every request, and returns to the login page
+when the token expires or the backend rejects it.
+
 ## Configuration
 
 | Service | Variable | Default |
@@ -59,7 +80,10 @@ and test on the **Chat** page or with the widget (set `tenantId` in `widget/demo
 | backend, ai-microservice | `PORT` | `8080` / `8081` |
 | backend, ai-microservice | `AI_API_KEY` (must match) | `MY_INTERNAL_AI_KEY` |
 | backend | `AI_BASE_URL` | `http://localhost:8081` |
-| frontend-admin | `VITE_ADMIN_PASSWORD` | `demo123` |
+| backend | `JWT_SECRET` (32+ chars) | random per start |
+| backend | `JWT_TTL` | `8h` |
+| backend | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / generated and logged |
+| backend | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173` |
 | frontend-admin | `VITE_API_BASE` / `VITE_WS_URL` | `http://localhost:8080` / `ws://localhost:8080/ws` |
 
 See `frontend-admin/.env.example`.
@@ -79,8 +103,12 @@ See `frontend-admin/.env.example`.
 
 Backend (`:8080`)
 
+`/tenants/**` and `/faq/**` require `Authorization: Bearer <token>`.
+
 | Method | Path | Description |
 |---|---|---|
+| POST | `/auth/login` | `{username, password}` → `{token, expiresAt, username}` (public) |
+| GET | `/auth/me` | current user |
 | POST | `/tenants/create` | `{name}` → tenant |
 | GET | `/tenants/list` | all tenants |
 | POST | `/faq/create` | `{tenantId, question, answer}` |
@@ -89,7 +117,7 @@ Backend (`:8080`)
 | DELETE | `/faq/{id}` | delete FAQ |
 | POST | `/faq/import/{tenantId}` | `[{question, answer}]` — replaces all FAQs of the tenant |
 | POST | `/faq/train/{tenantId}` | push current FAQs to the AI service |
-| WS | `/ws` (native), `/ws-chat` (SockJS) | STOMP endpoints |
+| WS | `/ws` (native), `/ws-chat` (SockJS) | STOMP chat endpoints (public) |
 
 AI microservice (`:8081`, `/ai/**` requires `X-API-KEY`)
 
@@ -101,7 +129,8 @@ AI microservice (`:8081`, `/ai/**` requires `X-API-KEY`)
 
 ## Limitations (template scope)
 
-- Admin login is a client-side password check only; the backend REST API is unauthenticated.
-  Add real auth (e.g. Spring Security + JWT) before production.
+- One role only: every admin user can manage every tenant. There is no user-management UI or
+  password change yet (add users directly in `admin_users` with a BCrypt hash), and no login rate limiting.
+- The public chat endpoint does not verify that a widget's `tenantId` belongs to the embedding site.
 - Answers are retrieval-only (best-matching FAQ), no generative model.
 - The AI models are held in memory per instance; run a single AI instance or add a shared cache.
