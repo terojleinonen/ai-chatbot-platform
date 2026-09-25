@@ -49,8 +49,13 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password })
     });
-    if (!r.ok) return null;
-    return r.json();
+    const body = await r.json().catch(() => ({}));
+    if (r.status === 429) {
+      const seconds = Number(r.headers.get("Retry-After")) || body.retryAfterSeconds || 60;
+      return { error: "rate_limited", retryAfterSeconds: seconds };
+    }
+    if (!r.ok) return { error: "invalid_credentials" };
+    return body;
   },
   listTenants: async () => {
     const r = await request("/tenants/list");

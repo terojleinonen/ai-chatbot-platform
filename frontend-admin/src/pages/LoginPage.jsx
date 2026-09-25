@@ -12,15 +12,18 @@ export default function LoginPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
-    let ok = false;
+    let failure;
     try {
-      ok = await login(username, password);
+      failure = await login(username, password);
     } catch {
       setError("Cannot reach the backend");
       return;
     }
-    if (!ok) setError("Invalid username or password");
-    else navigate("/dashboard");
+    if (!failure) navigate("/dashboard");
+    else if (failure.error === "rate_limited") {
+      const minutes = Math.ceil(failure.retryAfterSeconds / 60);
+      setError(`Too many failed attempts. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`);
+    } else setError("Invalid username or password");
   };
 
   return (

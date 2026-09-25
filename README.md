@@ -66,6 +66,13 @@ The backend uses Spring Security with stateless JWT bearer tokens:
   are public, because website visitors use them through the widget.
 - CORS for the REST API is limited to `CORS_ALLOWED_ORIGINS` (comma-separated, default the admin panel's
   `http://localhost:5173`).
+- Failed logins are rate limited: 5 per client IP + username and 20 per client IP (any username) within a
+  sliding 15-minute window. Further attempts get `429 Too Many Requests` with a `Retry-After` header, and the
+  password is not checked while blocked. A successful login clears that user's counter for the IP. Usernames
+  are not locked for every IP, so an attacker cannot lock the real admin out from elsewhere. Counters live in
+  memory (per backend instance, reset on restart). Behind a reverse proxy, set
+  `server.forward-headers-strategy=native` (or `framework`) so the limiter sees the real client IP instead of
+  the proxy's.
 - Set `JWT_SECRET` (32+ characters) anywhere beyond local development. Without it the backend signs with a
   random key, so every restart logs everyone out.
 
@@ -84,6 +91,8 @@ when the token expires or the backend rejects it.
 | backend | `JWT_TTL` | `8h` |
 | backend | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / generated and logged |
 | backend | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173` |
+| backend | `LOGIN_MAX_FAILURES_PER_USER_AND_IP` / `LOGIN_MAX_FAILURES_PER_IP` | `5` / `20` |
+| backend | `LOGIN_RATE_LIMIT_WINDOW` | `15m` |
 | frontend-admin | `VITE_API_BASE` / `VITE_WS_URL` | `http://localhost:8080` / `ws://localhost:8080/ws` |
 
 See `frontend-admin/.env.example`.
@@ -107,7 +116,7 @@ Backend (`:8080`)
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/auth/login` | `{username, password}` → `{token, expiresAt, username}` (public) |
+| POST | `/auth/login` | `{username, password}` → `{token, expiresAt, username}` (public; 401 bad credentials, 429 rate limited) |
 | GET | `/auth/me` | current user |
 | POST | `/tenants/create` | `{name}` → tenant |
 | GET | `/tenants/list` | all tenants |
@@ -130,7 +139,9 @@ AI microservice (`:8081`, `/ai/**` requires `X-API-KEY`)
 ## Limitations (template scope)
 
 - One role only: every admin user can manage every tenant. There is no user-management UI or
-  password change yet (add users directly in `admin_users` with a BCrypt hash), and no login rate limiting.
+  password change yet (add users directly in `admin_users` with a BCrypt hash).
+- Login rate limiting is in memory: with several backend instances each counts separately, so use a shared
+  store (e.g. Redis) or limit at the load balancer when scaling out.
 - The public chat endpoint does not verify that a widget's `tenantId` belongs to the embedding site.
 - Answers are retrieval-only (best-matching FAQ), no generative model.
 - The AI models are held in memory per instance; run a single AI instance or add a shared cache.
