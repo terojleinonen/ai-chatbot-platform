@@ -2,20 +2,32 @@ package com.demo.backend.service;
 
 import com.demo.backend.entity.Faq;
 import com.demo.backend.repository.FaqRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestClientException;
 
 import java.util.List;
 import java.util.Optional;
 
 @Service
 public class FaqService {
-    private final FaqRepository repo;
+    private static final Logger log = LoggerFactory.getLogger(FaqService.class);
 
-    public FaqService(FaqRepository repo) {
+    private final FaqRepository repo;
+    private final AiClientService ai;
+
+    public FaqService(FaqRepository repo, AiClientService ai) {
         this.repo = repo;
+        this.ai = ai;
     }
 
-    public Faq create(Faq faq) { return repo.save(faq); }
+    public Faq create(Faq faq) {
+        Faq saved = repo.save(faq);
+        syncQuietly(saved.getTenantId());
+        return saved;
+    }
 
     public List<Faq> list(Long tenantId) {
         return repo.findByTenantId(tenantId);
@@ -23,5 +35,37 @@ public class FaqService {
 
     public Optional<Faq> findById(Long id) { return repo.findById(id); }
 
-    public void delete(Long id) { repo.deleteById(id); }
+    public void delete(Long id) {
+        repo.findById(id).ifPresent(faq -> {
+            repo.delete(faq);
+            syncQuietly(faq.getTenantId());
+        });
+    }
+
+    /** Replaces all FAQs of a tenant (used by CSV import) and retrains the AI. */
+    @Transactional
+    public List<Faq> replaceAll(Long tenantId, List<Faq> faqs) {
+        repo.deleteByTenantId(tenantId);
+        faqs.forEach(f -> {
+            f.setId(null);
+            f.setTenantId(tenantId);
+        });
+        List<Faq> saved = repo.saveAll(faqs);
+        syncQuietly(tenantId);
+        return saved;
+    }
+
+    /** Pushes the tenant's current FAQs to the AI microservice. Throws if the AI service is unreachable. */
+    public String train(Long tenantId) {
+        return ai.train(tenantId, repo.findByTenantId(tenantId));
+    }
+
+    private void syncQuietly(Long tenantId) {
+        if (tenantId == null) return;
+        try {
+            train(tenantId);
+        } catch (RestClientException e) {
+            log.warn("Could not retrain AI for tenant {}: {}", tenantId, e.getMessage());
+        }
+    }
 }

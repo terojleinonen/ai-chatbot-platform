@@ -4,6 +4,7 @@ import com.demo.ai.entity.TenantFaqEntity;
 import com.demo.ai.model.TenantModel;
 import com.demo.ai.repository.TenantFaqRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -26,6 +27,7 @@ public class MultiTenantAiService {
         grouped.forEach((tenantId, faqs) -> models.put(tenantId, new TenantModel(faqs)));
     }
 
+    @Transactional
     public void replaceFaqsAndTrain(Long tenantId, List<TenantFaqEntity> faqs) {
         faqRepo.deleteByTenantId(tenantId);
         faqRepo.saveAll(faqs);
@@ -34,6 +36,7 @@ public class MultiTenantAiService {
     }
 
     public String reply(Long tenantId, String message) {
+        if (tenantId == null) return "Missing tenant id.";
         TenantModel model = models.get(tenantId);
         if (model == null) {
             List<TenantFaqEntity> faqs = faqRepo.findByTenantId(tenantId);
