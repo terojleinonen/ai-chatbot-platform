@@ -3,6 +3,8 @@
   let stompClient = null;
   // Bot replies still being streamed, by reply id.
   const streaming = {};
+  // Messages sent whose reply hasn't started arriving yet; the typing indicator shows while this is above 0.
+  let awaitingReplies = 0;
   let sessionId = (window.crypto && crypto.randomUUID)
     ? crypto.randomUUID()
     : Date.now().toString(36) + Math.random().toString(36).slice(2);
@@ -23,7 +25,12 @@
         <div id="cw-bubble">💬</div>
         <div id="cw-window" style="display:none;">
             <div id="cw-header"></div>
-            <div id="cw-messages"></div>
+            <div id="cw-messages">
+                <div id="cw-typing" class="cw-msg cw-typing" role="status" hidden>
+                    <span class="cw-dot"></span><span class="cw-dot"></span><span class="cw-dot"></span>
+                    <span class="cw-sr-only">The assistant is typing</span>
+                </div>
+            </div>
             <div id="cw-input-bar">
                 <input id="cw-input" placeholder="Type a message..." />
                 <div id="cw-send">➤</div>
@@ -57,6 +64,8 @@
       // {replyId, reply, done: true} with the complete text, which replaces what was streamed.
       stompClient.subscribe("/topic/replies/" + sessionId, (msg) => {
         const body = JSON.parse(msg.body);
+        // The first message of a reply means the assistant has started answering.
+        if (!streaming[body.replyId] && (body.done || typeof body.delta === "string")) replyStarted();
         if (body.done) {
           const div = streaming[body.replyId] || addMessage("", "bot");
           delete streaming[body.replyId];
@@ -74,7 +83,9 @@
         }
       });
     }, () => {
-      // Connection lost: retry after a short delay.
+      // Connection lost: replies in progress won't arrive, so stop waiting for them; retry after a short delay.
+      awaitingReplies = 0;
+      updateTyping();
       setTimeout(connectWs, 5000);
     });
   }
@@ -84,9 +95,20 @@
     const div = document.createElement("div");
     div.className = "cw-msg cw-" + from;
     div.textContent = text;
-    msgBox.appendChild(div);
+    // Keep the typing indicator below the conversation.
+    msgBox.insertBefore(div, document.getElementById("cw-typing"));
     scrollToEnd();
     return div;
+  }
+
+  function replyStarted() {
+    awaitingReplies = Math.max(0, awaitingReplies - 1);
+    updateTyping();
+  }
+
+  function updateTyping() {
+    document.getElementById("cw-typing").hidden = awaitingReplies === 0;
+    scrollToEnd();
   }
 
   function scrollToEnd() {
@@ -110,6 +132,8 @@
     }));
 
     input.value = "";
+    awaitingReplies++;
+    updateTyping();
   }
 
   window.ChatWidget = {
