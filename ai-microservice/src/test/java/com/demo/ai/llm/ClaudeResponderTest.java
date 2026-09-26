@@ -42,7 +42,7 @@ class ClaudeResponderTest {
             calls.incrementAndGet();
             lastRequest = JSON.readTree(exchange.getRequestBody());
             byte[] body = responseBody.getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.getResponseHeaders().add("Content-Type", status == 200 ? "text/event-stream" : "application/json");
             exchange.sendResponseHeaders(status, body.length);
             exchange.getResponseBody().write(body);
             exchange.close();
@@ -60,20 +60,42 @@ class ClaudeResponderTest {
                 "claude-opus-5", "low", 2048, maxContextChars, Duration.ofSeconds(5), 0, metrics);
     }
 
-    private void reply(String text, String stopReason) {
-        responseBody = """
-                {"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-5",
-                 "content":[{"type":"text","text":%s}],"stop_reason":"%s","stop_sequence":null,
-                 "usage":{"input_tokens":12,"output_tokens":7,"cache_creation_input_tokens":300,"cache_read_input_tokens":0}}
-                """.formatted(JSON.valueToTree(text).toString(), stopReason);
+    /** A streamed Messages API response (server-sent events) writing {@code chunks} as text deltas. */
+    private void reply(String stopReason, String... chunks) {
+        String usage = "{\"input_tokens\":12,\"output_tokens\":7,\"cache_creation_input_tokens\":300,\"cache_read_input_tokens\":0}";
+        StringBuilder sse = new StringBuilder();
+        event(sse, "message_start", "{\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\","
+                + "\"role\":\"assistant\",\"model\":\"claude-opus-5\",\"content\":[],\"stop_reason\":null,"
+                + "\"stop_sequence\":null,\"usage\":" + usage + "}}");
+        event(sse, "content_block_start", "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}");
+        for (String chunk : chunks) {
+            event(sse, "content_block_delta", "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":"
+                    + JSON.valueToTree(chunk) + "}}");
+        }
+        event(sse, "content_block_stop", "{\"type\":\"content_block_stop\",\"index\":0}");
+        event(sse, "message_delta", "{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"" + stopReason
+                + "\",\"stop_sequence\":null},\"usage\":" + usage + "}");
+        event(sse, "message_stop", "{\"type\":\"message_stop\"}");
+        responseBody = sse.toString();
+    }
+
+    private static void event(StringBuilder sse, String name, String data) {
+        sse.append("event: ").append(name).append("\ndata: ").append(data).append("\n\n");
+    }
+
+    private final List<String> streamed = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    private ClaudeResponder.Reply ask(ClaudeResponder responder, String question, List<ChatExchange> history) {
+        return responder.answer(FAQS, question, history, streamed::add);
     }
 
     @Test
     void answersFromTheFaqsWithACachedSystemPrompt() {
-        reply("We're open 9-17 on weekdays.", "end_turn");
-        ClaudeResponder.Reply r = responder(24000).answer(FAQS, "when are you open?", List.of());
+        reply("end_turn", "We're open 9-17 on weekdays.");
+        ClaudeResponder.Reply r = ask(responder(24000), "when are you open?", List.of());
 
         assertEquals(new ClaudeResponder.Reply("We're open 9-17 on weekdays.", true), r);
+        assertTrue(lastRequest.get("stream").asBoolean());
         assertEquals("claude-opus-5", lastRequest.get("model").asText());
         assertEquals("low", lastRequest.at("/output_config/effort").asText());
         assertEquals(ClaudeResponder.INSTRUCTIONS, lastRequest.at("/system/0/text").asText());
@@ -88,15 +110,15 @@ class ClaudeResponderTest {
 
     @Test
     void questionsTheFaqsDoNotCoverAreNotAnswered() {
-        reply("NO_ANSWER", "end_turn");
-        assertEquals(new ClaudeResponder.Reply(TenantModel.NO_MATCH, false), responder(24000).answer(FAQS, "what's your CEO's name?", List.of()));
+        reply("end_turn", "NO_ANSWER");
+        assertEquals(new ClaudeResponder.Reply(TenantModel.NO_MATCH, false), ask(responder(24000), "what's your CEO's name?", List.of()));
     }
 
     @Test
     void largeFaqSetsSendOnlyTheMostRelevantFaqsWithoutCaching() {
-        reply("Yes, to most countries.", "end_turn");
+        reply("end_turn", "Yes, to most countries.");
         // Room for one FAQ only (45 and 51 characters).
-        responder(60).answer(FAQS, "do you ship internationally?", List.of());
+        ask(responder(60), "do you ship internationally?", List.of());
         String faqBlock = lastRequest.at("/system/1/text").asText();
         assertTrue(faqBlock.contains("Do you ship internationally?"), faqBlock);
         assertFalse(faqBlock.contains("opening hours"), faqBlock);
@@ -105,17 +127,17 @@ class ClaudeResponderTest {
 
     @Test
     void refusedOrTruncatedRepliesAreNotShown() {
-        reply("", "refusal");
-        assertThrows(LlmUnusableReplyException.class, () -> responder(24000).answer(FAQS, "hi", List.of()));
-        reply("We are open from", "max_tokens");
-        assertThrows(LlmUnusableReplyException.class, () -> responder(24000).answer(FAQS, "hi", List.of()));
+        reply("refusal", "");
+        assertThrows(LlmUnusableReplyException.class, () -> ask(responder(24000), "hi", List.of()));
+        reply("max_tokens", "We are open from");
+        assertThrows(LlmUnusableReplyException.class, () -> ask(responder(24000), "hi", List.of()));
     }
 
     @Test
     void apiErrorsAreReported() {
         status = 529;
         responseBody = "{\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}";
-        assertThrows(AnthropicException.class, () -> responder(24000).answer(FAQS, "hi", List.of()));
+        assertThrows(AnthropicException.class, () -> ask(responder(24000), "hi", List.of()));
         assertEquals(1, calls.get());   // max-retries 0
         assertEquals(1, metrics.timer("ai.llm.requests", "model", "claude-opus-5", "outcome", "error").count());
     }
@@ -128,9 +150,9 @@ class ClaudeResponderTest {
 
     @Test
     void earlierExchangesComeBeforeTheQuestion() {
-        reply("We're closed on weekends.", "end_turn");
+        reply("end_turn", "We're closed on weekends.");
         List<ChatExchange> history = List.of(new ChatExchange("what are your opening hours?", "9-17 on weekdays."));
-        responder(24000).answer(FAQS, "and on weekends?", history);
+        ask(responder(24000), "and on weekends?", history);
 
         JsonNode messages = lastRequest.get("messages");
         assertEquals(3, messages.size());
@@ -144,10 +166,43 @@ class ClaudeResponderTest {
 
     @Test
     void followUpsFindTheFaqsOfTheConversationInLargeFaqSets() {
-        reply("Yes.", "end_turn");
+        reply("end_turn", "Yes.");
         // Room for one FAQ: "which countries?" alone shares no words with either FAQ question.
-        responder(60).answer(FAQS, "which countries?",
+        ask(responder(60), "which countries?",
                 List.of(new ChatExchange("do you ship internationally?", "Yes, to most countries.")));
         assertTrue(lastRequest.at("/system/1/text").asText().contains("Do you ship internationally?"));
+    }
+
+    @Test
+    void textIsStreamedAsClaudeWritesIt() {
+        reply("end_turn", "We're open ", "9-17 ", "on weekdays.");
+        assertEquals(new ClaudeResponder.Reply("We're open 9-17 on weekdays.", true), ask(responder(24000), "hours?", List.of()));
+        assertEquals(List.of("We're open ", "9-17 ", "on weekdays."), streamed);
+    }
+
+    @Test
+    void theNoAnswerMarkerIsNeverStreamed() {
+        reply("end_turn", "NO", "_ANS", "WER");
+        assertEquals(new ClaudeResponder.Reply(TenantModel.NO_MATCH, false), ask(responder(24000), "CEO?", List.of()));
+        assertEquals(List.of(), streamed);
+    }
+
+    @Test
+    void textThatOnlyStartsLikeTheMarkerIsReleased() {
+        List<String> out = new java.util.ArrayList<>();
+        ClaudeResponder.NoAnswerFilter filter = new ClaudeResponder.NoAnswerFilter(out::add);
+        filter.accept("NO");
+        filter.accept("T");
+        filter.accept(" yet.");
+        assertEquals(List.of("NOT", " yet."), out);
+    }
+
+    @Test
+    void errorsInTheMiddleOfTheStreamAreReported() {
+        responseBody = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"type\":\"message\","
+                + "\"role\":\"assistant\",\"model\":\"claude-opus-5\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,"
+                + "\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"
+                + "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n";
+        assertThrows(AnthropicException.class, () -> ask(responder(24000), "hi", List.of()));
     }
 }

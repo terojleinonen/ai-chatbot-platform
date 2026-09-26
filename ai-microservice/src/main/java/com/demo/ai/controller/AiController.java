@@ -6,12 +6,18 @@ import com.demo.ai.dto.ChatExchange;
 import com.demo.ai.dto.TrainFaqDto;
 import com.demo.ai.entity.TenantFaqEntity;
 import com.demo.ai.service.MultiTenantAiService;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.io.IOException;
+import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /** Internal API for the backend only (API key required); never called from browsers, so no CORS. */
 @RestController
@@ -25,6 +31,8 @@ public class AiController {
     /** Earlier replies are Claude's, so they can be longer than an FAQ answer. */
     static final int MAX_HISTORY_ANSWER_LENGTH = 20000;
 
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     private final MultiTenantAiService aiService;
 
     public AiController(MultiTenantAiService aiService) {
@@ -33,6 +41,37 @@ public class AiController {
 
     @PostMapping("/reply")
     public AiResponse reply(@RequestBody AiRequest req) {
+        validate(req);
+        return new AiResponse(aiService.reply(req.getTenantId(), req.getMessage(), req.getHistory()));
+    }
+
+    /**
+     * The reply as newline-delimited JSON, streamed while Claude writes it: any number of {"delta": text} lines, then
+     * {"reply": complete text, "done": true}, which replaces the deltas (they differ if Claude failed part-way).
+     */
+    @PostMapping("/reply/stream")
+    public void replyStream(@RequestBody AiRequest req, HttpServletResponse response) throws IOException {
+        validate(req);
+        response.setContentType("application/x-ndjson");
+        response.setCharacterEncoding("UTF-8");
+        OutputStream out = response.getOutputStream();
+        String reply = aiService.reply(req.getTenantId(), req.getMessage(), req.getHistory(),
+                text -> writeLine(out, Map.of("delta", text)));
+        writeLine(out, Map.of("reply", reply, "done", true));
+    }
+
+    /** Writes and flushes one JSON line; a disconnected client aborts the reply (and with it the Claude stream). */
+    private static void writeLine(OutputStream out, Map<String, Object> line) {
+        try {
+            out.write(JSON.writeValueAsBytes(line));
+            out.write('\n');
+            out.flush();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    private static void validate(AiRequest req) {
         if (req.getTenantId() == null) throw badRequest("tenantId is required");
         if (req.getMessage() == null || req.getMessage().isBlank()) throw badRequest("message is required");
         if (req.getMessage().length() > MAX_MESSAGE_LENGTH) throw badRequest("message is too long");
@@ -45,8 +84,6 @@ public class AiController {
                         + MAX_HISTORY_ANSWER_LENGTH + ")");
             }
         }
-        String answer = aiService.reply(req.getTenantId(), req.getMessage(), history);
-        return new AiResponse(answer);
     }
 
     @PostMapping("/train/{tenantId}")

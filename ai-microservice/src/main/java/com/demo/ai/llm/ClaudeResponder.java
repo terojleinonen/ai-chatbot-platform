@@ -2,10 +2,14 @@ package com.demo.ai.llm;
 
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.client.okhttp.AnthropicOkHttpClient;
+import com.anthropic.core.Timeout;
+import com.anthropic.core.http.StreamResponse;
+import com.anthropic.helpers.MessageAccumulator;
 import com.anthropic.models.messages.CacheControlEphemeral;
 import com.anthropic.models.messages.Message;
 import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.OutputConfig;
+import com.anthropic.models.messages.RawMessageStreamEvent;
 import com.anthropic.models.messages.StopReason;
 import com.anthropic.models.messages.TextBlockParam;
 import com.demo.ai.dto.ChatExchange;
@@ -21,6 +25,7 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 /**
@@ -28,13 +33,17 @@ import java.util.stream.Collectors;
  * Claude is told to answer only from them. Tenants whose FAQs fit in {@code maxContextChars} send all of them
  * (an identical prefix for every question, so it is prompt-cached); larger FAQ sets send the most relevant ones
  * by TF-IDF similarity to the recent questions, up to that size. Earlier exchanges of the chat go before the new
- * question as user/assistant turns, so follow-up questions are understood.
+ * question as user/assistant turns, so follow-up questions are understood. Replies are streamed: text is passed on
+ * as Claude writes it, except the "no answer" marker, which is held back until it is clear the reply is not one.
  * <p>
  * Disabled when no API key is configured; the caller then uses keyword matching.
  */
 @Component
 public class ClaudeResponder {
     private static final Logger log = LoggerFactory.getLogger(ClaudeResponder.class);
+
+    /** Longest silence while waiting for (more of) a reply before the attempt counts as failed. */
+    static final Duration STALL_TIMEOUT = Duration.ofSeconds(20);
 
     /** What Claude replies when the FAQs do not answer the question. */
     static final String NO_ANSWER = "NO_ANSWER";
@@ -68,7 +77,7 @@ public class ClaudeResponder {
                            @Value("${ai.llm.effort:low}") String effort,
                            @Value("${ai.llm.max-tokens:2048}") long maxTokens,
                            @Value("${ai.llm.max-context-chars:24000}") int maxContextChars,
-                           @Value("${ai.llm.timeout:20s}") Duration timeout,
+                           @Value("${ai.llm.timeout:60s}") Duration timeout,
                            @Value("${ai.llm.max-retries:1}") int maxRetries,
                            MeterRegistry metrics) {
         this.model = model;
@@ -83,7 +92,12 @@ public class ClaudeResponder {
         }
         AnthropicOkHttpClient.Builder builder = AnthropicOkHttpClient.builder()
                 .apiKey(apiKey)
-                .timeout(timeout)
+                // The request timeout covers the whole streamed reply; the read timeout catches a stalled stream.
+                .timeout(Timeout.builder()
+                        .connect(Duration.ofSeconds(10))
+                        .read(timeout.compareTo(STALL_TIMEOUT) < 0 ? timeout : STALL_TIMEOUT)
+                        .request(timeout)
+                        .build())
                 .maxRetries(maxRetries);
         if (baseUrl != null && !baseUrl.isBlank()) builder.baseUrl(baseUrl);
         this.client = builder.build();
@@ -95,16 +109,27 @@ public class ClaudeResponder {
     }
 
     /**
-     * Asks Claude to answer {@code question} from the tenant's FAQs.
+     * Asks Claude to answer {@code question} from the tenant's FAQs, passing text to {@code onText} as it arrives.
+     * The returned reply is authoritative: when it is not answered, or an exception is thrown, text already passed
+     * on must be replaced.
      *
      * @throws com.anthropic.errors.AnthropicException when the API call fails (after the SDK's retries)
      * @throws LlmUnusableReplyException when Claude's reply cannot be shown (refused, cut off, or empty)
      */
-    public Reply answer(TenantModel faqs, String question, List<ChatExchange> history) {
+    public Reply answer(TenantModel faqs, String question, List<ChatExchange> history, Consumer<String> onText) {
         Timer.Sample timer = Timer.start(metrics);
         String outcome = "error";
         try {
-            Message response = client.messages().create(request(faqs, question, history));
+            MessageAccumulator accumulator = MessageAccumulator.create();
+            NoAnswerFilter filter = new NoAnswerFilter(onText);
+            try (StreamResponse<RawMessageStreamEvent> stream = client.messages().createStreaming(request(faqs, question, history))) {
+                stream.stream()
+                        .peek(accumulator::accumulate)
+                        .flatMap(event -> event.contentBlockDelta().stream())
+                        .flatMap(delta -> delta.delta().text().stream())
+                        .forEach(delta -> filter.accept(delta.text()));
+            }
+            Message response = accumulator.message();
             countTokens(response);
             StopReason stop = response.stopReason().orElse(null);
             if (StopReason.REFUSAL.equals(stop)) {
@@ -129,6 +154,32 @@ public class ClaudeResponder {
             return new Reply(answered ? text : TenantModel.NO_MATCH, answered);
         } finally {
             timer.stop(metrics.timer("ai.llm.requests", "model", model, "outcome", outcome));
+        }
+    }
+
+    /**
+     * Passes text through, except that while the reply so far could still be the NO_ANSWER marker it is held back;
+     * as soon as it can't be, the held text is released.
+     */
+    static final class NoAnswerFilter implements Consumer<String> {
+        private final Consumer<String> downstream;
+        private final StringBuilder held = new StringBuilder();
+        private boolean passing;
+
+        NoAnswerFilter(Consumer<String> downstream) {
+            this.downstream = downstream;
+        }
+
+        @Override
+        public void accept(String delta) {
+            if (passing) {
+                downstream.accept(delta);
+                return;
+            }
+            held.append(delta);
+            if (NO_ANSWER.startsWith(held.toString().stripLeading())) return;
+            passing = true;
+            downstream.accept(held.toString());
         }
     }
 

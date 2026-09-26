@@ -67,8 +67,8 @@ class MultiTenantAiServiceTest {
         when(versions.findVersion(1L)).thenReturn(Optional.of(1L));
         when(faqs.findByTenantId(1L)).thenReturn(faq("What are your opening hours?", "9 to 5."));
         when(llm.enabled()).thenReturn(true);
-        when(llm.answer(any(), eq("when can I visit?"), any())).thenReturn(new ClaudeResponder.Reply("We're open 9 to 5.", true));
-        when(llm.answer(any(), eq("who is your CEO?"), any())).thenReturn(new ClaudeResponder.Reply(TenantModel.NO_MATCH, false));
+        when(llm.answer(any(), eq("when can I visit?"), any(), any())).thenReturn(new ClaudeResponder.Reply("We're open 9 to 5.", true));
+        when(llm.answer(any(), eq("who is your CEO?"), any(), any())).thenReturn(new ClaudeResponder.Reply(TenantModel.NO_MATCH, false));
 
         assertEquals("We're open 9 to 5.", service.reply(1L, "when can I visit?", List.of()));
         assertEquals(TenantModel.NO_MATCH, service.reply(1L, "who is your CEO?", List.of()));
@@ -81,12 +81,12 @@ class MultiTenantAiServiceTest {
         when(versions.findVersion(1L)).thenReturn(Optional.of(1L));
         when(faqs.findByTenantId(1L)).thenReturn(faq("What are your opening hours?", "9 to 5."));
         when(llm.enabled()).thenReturn(true);
-        when(llm.answer(any(), any(), any())).thenThrow(new AnthropicIoException("connection refused"));
+        when(llm.answer(any(), any(), any(), any())).thenThrow(new AnthropicIoException("connection refused"));
         assertEquals("9 to 5.", service.reply(1L, "opening hours", List.of()));
 
         reset(llm);
         when(llm.enabled()).thenReturn(true);
-        when(llm.answer(any(), any(), any())).thenThrow(new LlmUnusableReplyException("refused"));
+        when(llm.answer(any(), any(), any(), any())).thenThrow(new LlmUnusableReplyException("refused"));
         assertEquals("9 to 5.", service.reply(1L, "opening hours", List.of()));
         assertEquals(2, metrics.counter("ai.replies", "result", "answered", "source", "keyword").count());
     }
@@ -97,7 +97,22 @@ class MultiTenantAiServiceTest {
         when(faqs.findByTenantId(1L)).thenReturn(faq("What are your opening hours?", "9 to 5."));
         when(llm.enabled()).thenReturn(true);
         List<ChatExchange> history = List.of(new ChatExchange("opening hours?", "9 to 5."));
-        when(llm.answer(any(), eq("and on weekends?"), eq(history))).thenReturn(new ClaudeResponder.Reply("Closed.", true));
+        when(llm.answer(any(), eq("and on weekends?"), eq(history), any())).thenReturn(new ClaudeResponder.Reply("Closed.", true));
         assertEquals("Closed.", service.reply(1L, "and on weekends?", history));
+    }
+
+    @Test
+    void aClaudeFailureAfterStreamingStartsEndsWithTheKeywordAnswer() {
+        when(versions.findVersion(1L)).thenReturn(Optional.of(1L));
+        when(faqs.findByTenantId(1L)).thenReturn(faq("What are your opening hours?", "9 to 5."));
+        when(llm.enabled()).thenReturn(true);
+        when(llm.answer(any(), any(), any(), any())).thenAnswer(inv -> {
+            java.util.function.Consumer<String> onText = inv.getArgument(3);
+            onText.accept("We're op");
+            throw new AnthropicIoException("connection reset");
+        });
+        List<String> streamed = new java.util.ArrayList<>();
+        assertEquals("9 to 5.", service.reply(1L, "opening hours", List.of(), streamed::add));
+        assertEquals(List.of("We're op"), streamed);   // the caller replaces this with the returned reply
     }
 }

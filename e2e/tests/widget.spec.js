@@ -23,7 +23,7 @@ async function openWidget(page, widgetKey) {
   await page.locator("#cw-bubble").click();
 }
 
-/** Sends a message and returns the bot's reply (resending until the SockJS connection is up). */
+/** Sends a message and returns the bot's complete reply (resending until the SockJS connection is up). */
 async function ask(page, text) {
   const replies = page.locator(".cw-bot");
   const before = await replies.count();
@@ -33,6 +33,7 @@ async function ask(page, text) {
     await input.press("Enter");
     await expect(replies).toHaveCount(before + 1, { timeout: 3000 });
   }).toPass({ timeout: 20_000 });
+  await expect(replies.nth(before)).not.toHaveClass(/cw-streaming/);
   return replies.nth(before).textContent();
 }
 

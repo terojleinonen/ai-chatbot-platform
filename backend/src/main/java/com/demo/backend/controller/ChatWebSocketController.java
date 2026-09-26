@@ -17,11 +17,15 @@ import org.springframework.stereotype.Controller;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 /**
  * Public chat used by the embeddable widget and the admin panel's test chat. Clients publish
- * {sessionId, widgetKey, content} to /app/chat.send and subscribe to /topic/replies/{sessionId}.
+ * {sessionId, widgetKey, content} to /app/chat.send and subscribe to /topic/replies/{sessionId}. Each reply is
+ * streamed there as {sessionId, replyId, delta} messages (text to append, as the AI writes it), followed by
+ * {sessionId, replyId, reply, done: true} with the complete text, which replaces the deltas.
  * Every check below runs before the AI service is called. The session's recent exchanges go with each question,
  * so the AI can answer follow-ups.
  */
@@ -65,10 +69,14 @@ public class ChatWebSocketController {
         Map<String, Object> attributes = headers.getSessionAttributes() != null ? headers.getSessionAttributes() : Map.of();
         String ip = (String) attributes.getOrDefault(ChatHandshakeInterceptor.CLIENT_IP, "unknown");
         String origin = (String) attributes.get(ChatHandshakeInterceptor.ORIGIN);
-        reply(msg.sessionId, answer(msg, ip, origin));
+        String replyId = UUID.randomUUID().toString();
+        String reply = answer(msg, ip, origin, delta -> send(msg.sessionId,
+                Map.of("sessionId", msg.sessionId, "replyId", replyId, "delta", delta)));
+        send(msg.sessionId, Map.of("sessionId", msg.sessionId, "replyId", replyId, "reply", reply, "done", true));
     }
 
-    String answer(ChatMessage msg, String ip, String origin) {
+    /** Checks the message and returns the complete reply; AI text is also passed to {@code onDelta} as it streams. */
+    String answer(ChatMessage msg, String ip, String origin, Consumer<String> onDelta) {
         if (!rateLimiter.tryAcquire(ip)) return count("rate_limited", TOO_FAST);
         String content = msg.content == null ? "" : msg.content.trim();
         if (content.isEmpty()) return count("empty", EMPTY);
@@ -81,7 +89,7 @@ public class ChatWebSocketController {
         if (!adminPanel && !tenant.get().allowsOrigin(origin)) return count("origin_not_allowed", ORIGIN_NOT_ALLOWED);
         // Per tenant as well as session: the admin panel's test chat keeps its session id when switching tenants.
         String sessionKey = tenant.get().getId() + ":" + msg.sessionId;
-        String reply = ai.askAi(tenant.get().getId(), content, history.recent(sessionKey));
+        String reply = ai.askAi(tenant.get().getId(), content, history.recent(sessionKey), onDelta);
         if (!AiClientService.UNAVAILABLE.equals(reply)) history.append(sessionKey, new ChatHistory.Exchange(content, reply));
         return count("answered", reply);
     }
@@ -92,7 +100,7 @@ public class ChatWebSocketController {
         return reply;
     }
 
-    private void reply(String sessionId, String text) {
-        messaging.convertAndSend("/topic/replies/" + sessionId, Map.of("sessionId", sessionId, "reply", text));
+    private void send(String sessionId, Map<String, Object> payload) {
+        messaging.convertAndSend("/topic/replies/" + sessionId, payload);
     }
 }

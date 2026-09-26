@@ -50,6 +50,8 @@
   padding: 8px 12px;
   border-radius: 10px;
   font-size: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .cw-user {
@@ -62,6 +64,12 @@
   background: #e5e7eb;
   color: #111827;
   margin-right: auto;
+}
+
+/* A reply that is still being written. */
+.cw-bot.cw-streaming::after {
+  content: "▍";
+  opacity: 0.5;
 }
 
 #cw-input-bar {
