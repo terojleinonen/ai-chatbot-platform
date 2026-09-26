@@ -196,7 +196,7 @@ terminates HTTPS with automatically issued and renewed Let's Encrypt certificate
  internet ──443/80──▶ web (Caddy) ──▶ admin panel (static)     https://ADMIN_HOST
                          │        ──▶ widget files (static)    https://API_HOST/widget/chat-widget.js
                          └──────────▶ backend :8080            https://API_HOST  (REST, wss://, SockJS)
-                private network:      backend ──▶ ai :8081 ──▶ postgres (both databases)
+                private network:      backend ──▶ ai :8081 ──▶ postgres (both databases) ◀── backup (→ ./backups)
 ```
 
 Only Caddy publishes ports; Postgres, the backend and the AI service are reachable only on the private Docker
@@ -234,9 +234,21 @@ separate hostnames because their paths overlap.
 - **Logs:** `LOG_FORMAT=json` (set in the production stack) writes one JSON object per line (`@timestamp`,
   `level`, `service`, `logger_name`, `message`, ...) for log collectors; the default is plain text.
 
+### Backups
+
+The `backup` service dumps both databases when it starts and then every `BACKUP_INTERVAL_HOURS` (default 24) into
+`./backups/<UTC timestamp>/` on the host (`main_backend.dump`, `ai_microservice.dump`, PostgreSQL custom format),
+and deletes backups older than `BACKUP_KEEP_DAYS` (default 14). A backup only gets its timestamp name once both
+dumps are complete. Copy `./backups` off the server as well (e.g. a nightly `rsync` or object-storage sync), since
+a backup on the same disk does not survive losing the server.
+
+- Back up now: `docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps backup now`
+- Restore: `deploy/restore.sh .env.production <timestamp>` asks for confirmation, stops the backend and AI service,
+  restores both databases (each in a single transaction), and starts them again; the AI service reloads its models
+  from the restored data. Admin logins and chat are unavailable for the few seconds this takes.
+
 Upgrades: `git pull` and repeat step 3; Flyway applies new migrations on startup. Keep the `pgdata` volume
-(your data) and `caddy_data` (certificates) between deployments, and back up `pgdata` regularly
-(e.g. `docker compose -f docker-compose.prod.yml exec postgres pg_dumpall -U "$DB_USER" > backup.sql`).
+(your data) and `caddy_data` (certificates) between deployments.
 The `production-stack` CI job builds the images and runs the smoke test on every pull request.
 
 ## Embedding the widget
