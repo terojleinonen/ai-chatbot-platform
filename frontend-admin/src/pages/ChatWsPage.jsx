@@ -97,8 +97,7 @@ export default function ChatWsPage() {
             <span
               className={
                 "inline-block px-2 py-1 rounded text-sm whitespace-pre-wrap " +
-                (m.from === "user" ? "bg-blue-600 text-white" : "bg-gray-200") +
-                (m.streaming ? " opacity-70" : "")
+                (m.from === "user" ? "bg-blue-600 text-white" : "bg-gray-200")
               }
               data-streaming={m.streaming ? "true" : undefined}
             >
