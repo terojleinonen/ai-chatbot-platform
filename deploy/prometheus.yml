@@ -1,0 +1,13 @@
+# Scrapes the services' management ports on the private network (see docker-compose.prod.yml).
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: backend
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["backend:9090"]
+  - job_name: ai-microservice
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["ai:9091"]

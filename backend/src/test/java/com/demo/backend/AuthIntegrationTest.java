@@ -68,16 +68,6 @@ class AuthIntegrationTest {
     }
 
     @Test
-    void healthIsPublicButOtherActuatorEndpointsAreNotExposed() throws Exception {
-        mvc.perform(get("/actuator/health")).andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("UP"))
-                .andExpect(jsonPath("$.components").doesNotExist());
-        mvc.perform(get("/actuator/env")).andExpect(status().isUnauthorized());
-        String token = login("admin", "test-password");
-        mvc.perform(get("/actuator/env").header("Authorization", "Bearer " + token)).andExpect(status().isNotFound());
-    }
-
-    @Test
     void chatEndpointStaysPublic() throws Exception {
         // SockJS info endpoint used by the embeddable widget
         mvc.perform(get("/ws-chat/info")).andExpect(status().isOk());

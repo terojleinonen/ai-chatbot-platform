@@ -181,6 +181,8 @@ public development values from the `dev` profile are rejected outside it. Genera
 | backend | `CHAT_MAX_MESSAGES_PER_IP` / `CHAT_RATE_LIMIT_WINDOW` | | `20` / `1m` |
 | backend | `CHAT_MAX_MESSAGE_LENGTH` | | `1000` |
 | backend | `SERVER_FORWARD_HEADERS_STRATEGY` | behind a proxy | `native` in the production stack |
+| backend, ai-microservice | `MANAGEMENT_PORT` (health + metrics, private) | | `9090` / `9091` |
+| backend, ai-microservice | `LOG_FORMAT` | | `plain` (`json` in the production stack) |
 | frontend-admin | `VITE_API_BASE` / `VITE_WS_URL` / `VITE_WIDGET_URL` | | `http://localhost:8080` / `ws://…/ws` / `…/widget/chat-widget.js` |
 
 See `frontend-admin/.env.example`.
@@ -210,6 +212,27 @@ separate hostnames because their paths overlap.
 3. `docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build`
 4. Check: `deploy/smoke-test.sh .env.production` (health, HTTPS redirect, HSTS, admin panel, widget, login,
    CORS, AI connectivity and that no internal ports are exposed), then log in at `https://ADMIN_HOST`.
+
+### Monitoring
+
+- **Health:** `https://API_HOST/actuator/health` (public, no details, includes the database) for load balancers
+  and uptime monitors.
+- **Metrics:** both services expose Prometheus metrics on a private management port (backend `9090`, AI service
+  `9091`, set with `MANAGEMENT_PORT`) that is never published; Caddy returns 404 for `/actuator/*` other than
+  health. Start the bundled Prometheus with `--profile monitoring`; its UI listens on the server's localhost only
+  (`ssh -L 9090:localhost:9090 <server>`, then http://localhost:9090). Besides JVM, HTTP, database-pool and
+  Flyway metrics there are:
+
+  | Metric | Labels | Meaning |
+  |---|---|---|
+  | `chat_messages_total` | `outcome` = answered, rate_limited, empty, too_long, unknown_widget, origin_not_allowed | public chat messages |
+  | `auth_logins_total` | `outcome` = success, failure, rate_limited | admin logins |
+  | `ai_requests_seconds` | `operation` = reply, train; `outcome` = success, error | backend → AI service calls (latency histogram) |
+  | `ai_replies_total` | `result` = answered, no_match, no_data | how often the AI found a matching FAQ |
+  | `ai_tenant_models` | | tenant models loaded in the AI service |
+
+- **Logs:** `LOG_FORMAT=json` (set in the production stack) writes one JSON object per line (`@timestamp`,
+  `level`, `service`, `logger_name`, `message`, ...) for log collectors; the default is plain text.
 
 Upgrades: `git pull` and repeat step 3; Flyway applies new migrations on startup. Keep the `pgdata` volume
 (your data) and `caddy_data` (certificates) between deployments, and back up `pgdata` regularly
@@ -263,7 +286,8 @@ characters, imports up to 5000 rows, tenant names 255 characters (400 with a mes
 | POST | `/faq/import/{tenantId}` | `[{question, answer}]` — replaces all FAQs of the tenant |
 | POST | `/faq/train/{tenantId}` | push current FAQs to the AI service |
 | WS | `/ws` (native), `/ws-chat` (SockJS) | STOMP chat endpoints (public; see "Public chat protection") |
-| GET | `/actuator/health` | health check incl. database (public, no details) |
+| GET | `/actuator/health` | health check incl. database (management port; public via Caddy, no details) |
+| GET | `/actuator/prometheus` | Prometheus metrics (management port only, never public) |
 
 AI microservice (`:8081`, `/ai/**` requires `X-API-KEY`)
 
@@ -281,4 +305,3 @@ AI microservice (`:8081`, `/ai/**` requires `X-API-KEY`)
 - The `Origin` check stops other websites from embedding a tenant's chat in browsers, but a non-browser client
   can send any `Origin`; the per-IP rate limit is what bounds such traffic.
 - Answers are retrieval-only (best-matching FAQ), no generative model.
-- No metrics or structured logging yet beyond the health endpoints; Postgres backups are up to the operator.

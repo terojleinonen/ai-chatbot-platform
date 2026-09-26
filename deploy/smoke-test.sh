@@ -40,6 +40,7 @@ admin_page=$("${CURL[@]}" "$ADMIN/")
 check "admin panel routes fall back to the SPA" "$("${CURL[@]}" -o /dev/null -w '%{http_code}' "$ADMIN/tenants")" 200
 bundle=$("${CURL[@]}" "$ADMIN/$(echo "$admin_page" | grep -oE 'assets/index-[^"]+\.js' | head -1)")
 [[ "$bundle" == *"https://$API_HOST"* ]] && pass "admin panel built for https://$API_HOST" || fail "admin panel built for https://$API_HOST"
+check "metrics are not public" "$("${CURL[@]}" -o /dev/null -w '%{http_code}' "$API/actuator/prometheus")" 404
 check "widget script served" "$("${CURL[@]}" -o /dev/null -w '%{http_code}' "$API/widget/chat-widget.js")" 200
 check "widget demo page not published" "$("${CURL[@]}" -o /dev/null -w '%{http_code}' "$API/widget/demo.html")" 404
 

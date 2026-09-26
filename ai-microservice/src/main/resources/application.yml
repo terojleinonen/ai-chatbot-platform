@@ -18,6 +18,26 @@ spring:
       ddl-auto: validate
     open-in-view: false
 
+# Health and Prometheus metrics on a separate management port that is never published: only the private
+# network (and Caddy, for /actuator/health) can reach it.
+management:
+  server:
+    port: ${MANAGEMENT_PORT:9091}
+  endpoints:
+    web:
+      exposure:
+        include: health, prometheus
+  endpoint:
+    health:
+      show-details: never
+  metrics:
+    tags:
+      application: ai-microservice
+
+logging:
+  # "json" for structured (JSON) logs, "plain" for the default console format.
+  format: ${LOG_FORMAT:plain}
+
 security:
   # Only the dev profile may use the built-in dev API key.
   dev-mode: false

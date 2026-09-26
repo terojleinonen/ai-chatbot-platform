@@ -3,6 +3,7 @@ package com.demo.ai.service;
 import com.demo.ai.entity.TenantFaqEntity;
 import com.demo.ai.model.TenantModel;
 import com.demo.ai.repository.TenantFaqRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -14,8 +15,12 @@ public class MultiTenantAiService {
     private final TenantFaqRepository faqRepo;
     private final Map<Long, TenantModel> models = new ConcurrentHashMap<>();
 
-    public MultiTenantAiService(TenantFaqRepository faqRepo) {
+    private final MeterRegistry metrics;
+
+    public MultiTenantAiService(TenantFaqRepository faqRepo, MeterRegistry metrics) {
         this.faqRepo = faqRepo;
+        this.metrics = metrics;
+        metrics.gaugeMapSize("ai.tenant.models", java.util.List.of(), models);
     }
 
     public void loadAllTenants() {
@@ -40,10 +45,18 @@ public class MultiTenantAiService {
         TenantModel model = models.get(tenantId);
         if (model == null) {
             List<TenantFaqEntity> faqs = faqRepo.findByTenantId(tenantId);
-            if (faqs.isEmpty()) return "This tenant has no training data yet.";
+            if (faqs.isEmpty()) return count("no_data", "This tenant has no training data yet.");
             model = new TenantModel(faqs);
             models.put(tenantId, model);
         }
-        return model.getBestAnswer(message);
+        String answer = model.getBestAnswer(message);
+        String result = TenantModel.NO_MATCH.equals(answer) ? "no_match" : TenantModel.NO_DATA.equals(answer) ? "no_data" : "answered";
+        return count(result, answer);
+    }
+
+    /** Counts replies by result (metric ai_replies_total{result=answered|no_match|no_data}). */
+    private String count(String result, String answer) {
+        metrics.counter("ai.replies", "result", result).increment();
+        return answer;
     }
 }

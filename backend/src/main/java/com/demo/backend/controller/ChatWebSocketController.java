@@ -6,6 +6,7 @@ import com.demo.backend.service.AiClientService;
 import com.demo.backend.service.TenantService;
 import com.demo.backend.websocket.ChatHandshakeInterceptor;
 import com.demo.backend.websocket.ChatMessage;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
@@ -37,11 +38,14 @@ public class ChatWebSocketController {
     private final int maxMessageLength;
     /** The admin panel's origins may test every tenant's chat, whatever the tenant's allowed websites. */
     private final List<String> adminOrigins;
+    private final MeterRegistry metrics;
 
     public ChatWebSocketController(AiClientService ai, TenantService tenants, ChatRateLimiter rateLimiter,
                                    SimpMessagingTemplate messaging,
                                    @Value("${chat.max-message-length}") int maxMessageLength,
-                                   @Value("${security.cors.allowed-origins}") List<String> adminOrigins) {
+                                   @Value("${security.cors.allowed-origins}") List<String> adminOrigins,
+                                   MeterRegistry metrics) {
+        this.metrics = metrics;
         this.ai = ai;
         this.tenants = tenants;
         this.rateLimiter = rateLimiter;
@@ -61,17 +65,23 @@ public class ChatWebSocketController {
     }
 
     String answer(ChatMessage msg, String ip, String origin) {
-        if (!rateLimiter.tryAcquire(ip)) return TOO_FAST;
+        if (!rateLimiter.tryAcquire(ip)) return count("rate_limited", TOO_FAST);
         String content = msg.content == null ? "" : msg.content.trim();
-        if (content.isEmpty()) return EMPTY;
+        if (content.isEmpty()) return count("empty", EMPTY);
         if (content.length() > maxMessageLength) {
-            return "Your message is too long (at most " + maxMessageLength + " characters).";
+            return count("too_long", "Your message is too long (at most " + maxMessageLength + " characters).");
         }
         Optional<Tenant> tenant = tenants.findByWidgetKey(msg.widgetKey);
-        if (tenant.isEmpty()) return UNKNOWN_WIDGET;
+        if (tenant.isEmpty()) return count("unknown_widget", UNKNOWN_WIDGET);
         boolean adminPanel = origin != null && adminOrigins.contains(origin);
-        if (!adminPanel && !tenant.get().allowsOrigin(origin)) return ORIGIN_NOT_ALLOWED;
-        return ai.askAi(tenant.get().getId(), content);
+        if (!adminPanel && !tenant.get().allowsOrigin(origin)) return count("origin_not_allowed", ORIGIN_NOT_ALLOWED);
+        return count("answered", ai.askAi(tenant.get().getId(), content));
+    }
+
+    /** Counts chat messages by outcome (metric chat_messages_total{outcome=...}). */
+    private String count(String outcome, String reply) {
+        metrics.counter("chat.messages", "outcome", outcome).increment();
+        return reply;
     }
 
     private void reply(String sessionId, String text) {

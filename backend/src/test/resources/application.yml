@@ -33,3 +33,18 @@ chat:
   rate-limit:
     max-messages-per-ip: 20
     window: 1m
+
+# Note: this file replaces src/main/resources/application.yml in tests, so it repeats what tests rely on.
+management:
+  server:
+    port: 0   # random free port in tests
+  endpoints:
+    web:
+      exposure:
+        include: health, prometheus
+  endpoint:
+    health:
+      show-details: never
+  metrics:
+    tags:
+      application: backend

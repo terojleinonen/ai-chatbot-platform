@@ -33,6 +33,15 @@
 	import security_headers
 	encode zstd gzip
 
+	# Health checks for load balancers and uptime monitors come from the backend's private management port;
+	# every other actuator endpoint (e.g. metrics) stays internal.
+	handle /actuator/health {
+		reverse_proxy backend:9090
+	}
+	handle /actuator/* {
+		respond 404
+	}
+
 	handle_path /widget/* {
 		root * /srv/widget
 		file_server

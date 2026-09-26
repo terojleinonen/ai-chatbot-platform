@@ -33,6 +33,7 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       AI_API_KEY: ${AI_API_KEY:?set AI_API_KEY}
+      LOG_FORMAT: json
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,6 +54,7 @@ services:
       CORS_ALLOWED_ORIGINS: https://${ADMIN_HOST:?set ADMIN_HOST}
       # Trust X-Forwarded-* from Caddy (private network) so rate limits see real client IPs.
       SERVER_FORWARD_HEADERS_STRATEGY: native
+      LOG_FORMAT: json
     depends_on:
       postgres:
         condition: service_healthy
@@ -80,6 +82,21 @@ services:
     depends_on: [backend]
     networks: [internal]
 
+  # Optional metrics: docker compose ... --profile monitoring up -d
+  # Scrapes both services' private management ports. The UI is published on the server's localhost only;
+  # reach it with an SSH tunnel: ssh -L 9090:localhost:9090 <server>, then open http://localhost:9090
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    profiles: [monitoring]
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks: [internal]
+
 networks:
   internal:
 
@@ -87,3 +104,4 @@ volumes:
   pgdata:
   caddy_data:
   caddy_config:
+  prometheus_data:

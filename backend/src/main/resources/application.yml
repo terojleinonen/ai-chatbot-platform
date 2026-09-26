@@ -24,15 +24,25 @@ ai:
   # Must match security.api-key in the ai-microservice. At least 32 characters.
   api-key: ${AI_API_KEY}
 
-# Only the health endpoint is exposed (for load balancers and uptime checks), without details.
+# Health and Prometheus metrics on a separate management port that is never published: only the private
+# network (and Caddy, for /actuator/health) can reach it.
 management:
+  server:
+    port: ${MANAGEMENT_PORT:9090}
   endpoints:
     web:
       exposure:
-        include: health
+        include: health, prometheus
   endpoint:
     health:
       show-details: never
+  metrics:
+    tags:
+      application: backend
+
+logging:
+  # "json" for structured (JSON) logs, "plain" for the default console format.
+  format: ${LOG_FORMAT:plain}
 
 chat:
   # Public chat (widget) protection, applied before the AI service is called.
