@@ -120,6 +120,37 @@ services:
         condition: service_healthy
     networks: [internal]
 
+  # Optional off-site copies: docker compose ... --profile offsite up -d (needs the OFFSITE_* settings).
+  # Encrypts each completed backup (rclone crypt) and copies it to S3-compatible object storage every
+  # OFFSITE_INTERVAL_MINUTES, verifies the upload, and keeps OFFSITE_KEEP_DAYS there (0 = never delete).
+  # Unhealthy in `docker compose ps` when the last successful sync is too old. See README "Off-site copies".
+  offsite:
+    image: rclone/rclone:1.68
+    profiles: [offsite]
+    restart: unless-stopped
+    entrypoint: ["/offsite.sh"]
+    environment:
+      OFFSITE_S3_PROVIDER: ${OFFSITE_S3_PROVIDER:-Other}
+      OFFSITE_S3_ENDPOINT: ${OFFSITE_S3_ENDPOINT:-}
+      OFFSITE_S3_REGION: ${OFFSITE_S3_REGION:-}
+      OFFSITE_S3_BUCKET: ${OFFSITE_S3_BUCKET:-}
+      OFFSITE_S3_PREFIX: ${OFFSITE_S3_PREFIX:-ai-chatbot-backups}
+      OFFSITE_S3_ACCESS_KEY_ID: ${OFFSITE_S3_ACCESS_KEY_ID:-}
+      OFFSITE_S3_SECRET_ACCESS_KEY: ${OFFSITE_S3_SECRET_ACCESS_KEY:-}
+      OFFSITE_ENCRYPTION_PASSWORD: ${OFFSITE_ENCRYPTION_PASSWORD:-}
+      OFFSITE_INTERVAL_MINUTES: ${OFFSITE_INTERVAL_MINUTES:-60}
+      OFFSITE_KEEP_DAYS: ${OFFSITE_KEEP_DAYS:-30}
+    volumes:
+      - ./deploy/offsite.sh:/offsite.sh:ro
+      - ./backups:/backups     # read by syncs; written only by "fetch" (disaster recovery)
+      - offsite_state:/state
+    healthcheck:
+      test: ["CMD", "/offsite.sh", "health"]
+      interval: 1m
+      timeout: 10s
+      start_period: 10m
+    networks: [internal]
+
   # Optional metrics: docker compose ... --profile monitoring up -d
   # Scrapes both services' private management ports. The UI is published on the server's localhost only;
   # reach it with an SSH tunnel: ssh -L 9090:localhost:9090 <server>, then open http://localhost:9090
@@ -143,3 +174,4 @@ volumes:
   caddy_data:
   caddy_config:
   prometheus_data:
+  offsite_state:

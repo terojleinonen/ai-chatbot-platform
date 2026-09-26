@@ -198,6 +198,7 @@ terminates HTTPS with automatically issued and renewed Let's Encrypt certificate
                          │        ──▶ widget files (static)    https://API_HOST/widget/chat-widget.js
                          └──────────▶ backend :8080            https://API_HOST  (REST, wss://, SockJS)
                 private network:      backend ──▶ ai :8081 ──▶ postgres (both databases) ◀── backup (→ ./backups)
+                                                                   ./backups ──▶ offsite (encrypted) ──▶ S3 bucket
                                       backend ──▶ redis (shared rate-limit counters)
 ```
 
@@ -256,13 +257,41 @@ The backend and AI service can each run more than one instance:
 The `backup` service dumps both databases when it starts and then every `BACKUP_INTERVAL_HOURS` (default 24) into
 `./backups/<UTC timestamp>/` on the host (`main_backend.dump`, `ai_microservice.dump`, PostgreSQL custom format),
 and deletes backups older than `BACKUP_KEEP_DAYS` (default 14). A backup only gets its timestamp name once both
-dumps are complete. Copy `./backups` off the server as well (e.g. a nightly `rsync` or object-storage sync), since
-a backup on the same disk does not survive losing the server.
+dumps are complete. A backup on the same disk does not survive losing the server, so also enable off-site copies.
 
 - Back up now: `docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps backup now`
 - Restore: `deploy/restore.sh .env.production <timestamp>` asks for confirmation, stops the backend and AI service,
   restores both databases (each in a single transaction), and starts them again; the AI service reloads its models
   from the restored data. Admin logins and chat are unavailable for the few seconds this takes.
+
+### Off-site copies
+
+The optional `offsite` service copies every completed backup to S3-compatible object storage (AWS S3, Backblaze B2,
+Cloudflare R2, Wasabi, Hetzner, MinIO, ...) with [rclone](https://rclone.org):
+
+- **Encrypted before upload** (rclone crypt: file contents and names) with `OFFSITE_ENCRYPTION_PASSWORD`; the
+  service refuses to run without it, so the storage provider only ever holds ciphertext. Keep the password
+  somewhere other than the server: without it the copies cannot be decrypted.
+- **Verified:** after each upload every file is checked against the local copy (`rclone cryptcheck`).
+- Runs every `OFFSITE_INTERVAL_MINUTES` (default 60) and keeps `OFFSITE_KEEP_DAYS` (default 30, longer than the
+  local 14) in the bucket; `0` never deletes anything, for buckets with object lock or lifecycle rules, which also
+  protects the copies if the server itself is compromised.
+- **Monitoring:** the service turns `unhealthy` in `docker compose ps` when its last successful sync is older than
+  three intervals; sync errors are logged and retried.
+
+Set up: create a bucket and an access key limited to it, fill in the `OFFSITE_*` settings in `.env.production`,
+then `docker compose -f docker-compose.prod.yml --env-file .env.production --profile offsite up -d`.
+
+Disaster recovery (works on a new server with this repository, the env file and Docker):
+
+```bash
+deploy/offsite-restore.sh .env.production              # list off-site backups
+deploy/offsite-restore.sh .env.production <timestamp>  # download and decrypt into ./backups/<timestamp>
+deploy/restore.sh .env.production <timestamp>          # restore it
+```
+
+The CI `production-stack` job runs `deploy/test/offsite-roundtrip.sh` against a throwaway S3 server: encrypted
+upload, names and contents unreadable in the bucket, download identical to the original, wrong password rejected.
 
 Upgrades: `git pull` and repeat step 3; Flyway applies new migrations on startup. Keep the `pgdata` volume
 (your data) and `caddy_data` (certificates) between deployments.

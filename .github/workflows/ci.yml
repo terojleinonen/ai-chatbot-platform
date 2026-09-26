@@ -147,6 +147,9 @@ jobs:
         run: docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build --wait --scale backend=2 --scale ai=2
       - name: Smoke test over HTTPS
         run: deploy/smoke-test.sh .env.production
+      # Encrypted off-site copy and restore, against a throwaway S3 server (deploy/test/offsite-s3.override.yml).
+      - name: Off-site backup round trip
+        run: deploy/test/offsite-roundtrip.sh .env.production
       - name: Service logs
         if: failure()
-        run: docker compose -f docker-compose.prod.yml --env-file .env.production logs --no-color --tail 200
+        run: docker compose -f docker-compose.prod.yml -f deploy/test/offsite-s3.override.yml --env-file .env.production --profile offsite logs --no-color --tail 200

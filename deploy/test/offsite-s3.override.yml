@@ -1,0 +1,10 @@
+# TEST ONLY (CI and local checks): a throwaway S3 server on the private network, standing in for the
+# off-site bucket. Never use this in production.
+services:
+  s3test:
+    image: rclone/rclone:1.68
+    command: ["serve", "s3", "/data", "--addr", ":9000", "--auth-key", "testkey,testsecret-0123456789"]
+    volumes: [s3test_data:/data]
+    networks: [internal]
+volumes:
+  s3test_data:
