@@ -103,6 +103,8 @@ export default function ChatWsPage() {
               data-streaming={m.streaming ? "true" : undefined}
             >
               {m.text}
+              {/* Cursor while the reply is still being written, as in the widget. */}
+              {m.streaming && <span className="opacity-50" aria-hidden="true" data-testid="streaming-cursor">▍</span>}
             </span>
           </div>
         ))}
