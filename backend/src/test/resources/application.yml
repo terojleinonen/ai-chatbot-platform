@@ -45,6 +45,9 @@ chat:
   rate-limit:
     max-messages-per-ip: 20
     window: 1m
+  history:
+    max-exchanges: 10
+    ttl: 30m
 
 # Note: this file replaces src/main/resources/application.yml in tests, so it repeats what tests rely on.
 management:

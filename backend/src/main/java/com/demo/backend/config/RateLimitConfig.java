@@ -1,7 +1,10 @@
 package com.demo.backend.config;
 
+import com.demo.backend.chat.ChatHistory;
 import com.demo.backend.chat.ChatRateLimiter;
+import com.demo.backend.chat.InMemoryChatHistory;
 import com.demo.backend.chat.InMemoryChatRateLimiter;
+import com.demo.backend.chat.RedisChatHistory;
 import com.demo.backend.chat.RedisChatRateLimiter;
 import com.demo.backend.security.InMemoryLoginRateLimiter;
 import com.demo.backend.security.LoginRateLimiter;
@@ -18,12 +21,21 @@ import java.net.URI;
 import java.time.Duration;
 
 /**
- * Where the login and chat rate limits keep their counters: in memory (RATE_LIMIT_STORE=memory, the default;
- * one backend instance) or in Redis (RATE_LIMIT_STORE=redis with REDIS_URL; shared by all instances).
+ * Where the login and chat rate limits keep their counters, and the chat keeps its conversation history: in memory
+ * (RATE_LIMIT_STORE=memory, the default; one backend instance) or in Redis (RATE_LIMIT_STORE=redis with REDIS_URL;
+ * shared by all instances).
  */
 @Configuration
 public class RateLimitConfig {
     record Limits(int loginPerUserAndIp, int loginPerIp, Duration loginWindow, int chatPerIp, Duration chatWindow) {}
+
+    record HistorySettings(int maxExchanges, Duration ttl) {}
+
+    @Bean
+    HistorySettings chatHistorySettings(@Value("${chat.history.max-exchanges}") int maxExchanges,
+                                        @Value("${chat.history.ttl}") Duration ttl) {
+        return new HistorySettings(maxExchanges, ttl);
+    }
 
     @Bean
     Limits rateLimits(@Value("${security.login-rate-limit.max-failures-per-user-and-ip}") int loginPerUserAndIp,
@@ -45,6 +57,11 @@ public class RateLimitConfig {
         @Bean
         ChatRateLimiter chatRateLimiter(Limits l) {
             return new InMemoryChatRateLimiter(l.chatPerIp(), l.chatWindow());
+        }
+
+        @Bean
+        ChatHistory chatHistory(HistorySettings h) {
+            return new InMemoryChatHistory(h.maxExchanges(), h.ttl());
         }
     }
 
@@ -72,6 +89,11 @@ public class RateLimitConfig {
         @Bean
         ChatRateLimiter chatRateLimiter(StringRedisTemplate redis, Limits l) {
             return new RedisChatRateLimiter(redis, l.chatPerIp(), l.chatWindow());
+        }
+
+        @Bean
+        ChatHistory chatHistory(StringRedisTemplate redis, HistorySettings h) {
+            return new RedisChatHistory(redis, h.maxExchanges(), h.ttl());
         }
     }
 }

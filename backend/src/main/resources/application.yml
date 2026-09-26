@@ -50,8 +50,8 @@ logging:
   # "json" for structured (JSON) logs, "plain" for the default console format.
   format: ${LOG_FORMAT:plain}
 
-# Rate limit counters (login and chat): "memory" for a single backend instance, "redis" to share them between
-# several instances (then REDIS_URL, e.g. redis://redis:6379, is required).
+# Rate limit counters (login and chat) and chat history: "memory" for a single backend instance, "redis" to share
+# them between several instances (then REDIS_URL, e.g. redis://redis:6379, is required).
 rate-limit:
   store: ${RATE_LIMIT_STORE:memory}
   redis-url: ${REDIS_URL:}
@@ -62,6 +62,11 @@ chat:
   rate-limit:
     max-messages-per-ip: ${CHAT_MAX_MESSAGES_PER_IP:20}
     window: ${CHAT_RATE_LIMIT_WINDOW:1m}
+  # Recent exchanges of each chat sent to the AI so it understands follow-up questions (0 = no history), and
+  # how long a chat is remembered after its last message. Stored where RATE_LIMIT_STORE says.
+  history:
+    max-exchanges: ${CHAT_HISTORY_MAX_EXCHANGES:10}
+    ttl: ${CHAT_HISTORY_TTL:30m}
 
 security:
   # Only the dev profile may use the built-in dev secrets or a random JWT key.

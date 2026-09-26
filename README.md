@@ -48,13 +48,21 @@ cover the question it says so ("I'm not sure yet...") instead of guessing.
   questions within that window read it from the cache at a tenth of the input price. Larger
   FAQ sets send the most relevant FAQs (by TF-IDF similarity to the question) that fit, which varies per question
   and is not cached.
+- **Conversation history:** the backend remembers each chat's last `CHAT_HISTORY_MAX_EXCHANGES` (default 10)
+  question/answer exchanges and sends them with every new question, so Claude understands follow-ups ("and on
+  weekends?"); the relevant-FAQ selection for large FAQ sets also looks at the two previous questions. A chat is
+  forgotten `CHAT_HISTORY_TTL` (default 30 minutes) after its last message, and a new one starts with every page
+  load. History lives where the rate limits do (`RATE_LIMIT_STORE`): in memory, or in Redis so every backend
+  instance sees it. Set `CHAT_HISTORY_MAX_EXCHANGES=0` to answer each message on its own. Keyword matching ignores
+  history.
 - **Model and cost:** `AI_LLM_MODEL` defaults to `claude-opus-5` ($5 / $25 per million input / output tokens) at
   `AI_LLM_EFFORT=low`, which suits short FAQ answers. A question to a tenant with 6k tokens of FAQs costs about
   $0.03 uncached, or well under a cent when the FAQs are cached, plus the answer (~100-300 output tokens).
   `claude-sonnet-5` ($2 / $10) or `claude-haiku-4-5` ($1 / $5, set `AI_LLM_EFFORT=` empty, as Haiku does not
-  support effort) are cheaper options. Token usage is in the `ai_llm_tokens_total` metric. Each question is answered
-  on its own (no conversation history), which keeps prompts small.
-- **Privacy:** customer messages and the tenant's FAQs are sent to the Anthropic API.
+  support effort) are cheaper options. Token usage is in the `ai_llm_tokens_total` metric. History adds the
+  earlier exchanges to each question's input (a few hundred tokens for a typical chat, uncached).
+- **Privacy:** customer messages, the chat's recent history and the tenant's FAQs are sent to the Anthropic API;
+  the history is kept (in memory or Redis) only until the chat expires.
 
 ## Prerequisites
 
@@ -207,6 +215,7 @@ public development values from the `dev` profile are rejected outside it. Genera
 | backend | `LOGIN_RATE_LIMIT_WINDOW` | | `15m` |
 | backend | `CHAT_MAX_MESSAGES_PER_IP` / `CHAT_RATE_LIMIT_WINDOW` | | `20` / `1m` |
 | backend | `CHAT_MAX_MESSAGE_LENGTH` | | `1000` |
+| backend | `CHAT_HISTORY_MAX_EXCHANGES` / `CHAT_HISTORY_TTL` | | `10` / `30m` |
 | backend | `RATE_LIMIT_STORE` / `REDIS_URL` | `REDIS_URL` if `redis` | `memory` (`redis` + `redis://redis:6379` in the production stack) |
 | backend | `SERVER_FORWARD_HEADERS_STRATEGY` | behind a proxy | `native` in the production stack |
 | backend, ai-microservice | `MANAGEMENT_PORT` (health + metrics, private) | | `9090` / `9091` |
@@ -279,9 +288,10 @@ The backend and AI service can each run more than one instance:
 - **Load balancing:** Caddy finds every backend instance via DNS and keeps each client IP on one instance (SockJS
   fallback transports need all requests of a chat session on the same instance, and cookies are unreliable for a
   widget embedded on other sites). If an instance stops, its clients move to another within seconds.
-- **Rate limits:** the production stack keeps login and chat counters in Redis (`RATE_LIMIT_STORE=redis`), so all
-  instances enforce one shared limit. Without Redis (`RATE_LIMIT_STORE=memory`, the default outside the
-  production stack) each instance counts separately.
+- **Rate limits and chat history:** the production stack keeps login and chat counters, and chat history, in Redis
+  (`RATE_LIMIT_STORE=redis`), so all instances enforce one shared limit and continue each other's chats. Without
+  Redis (`RATE_LIMIT_STORE=memory`, the default outside the production stack) each instance counts separately and
+  a chat that moves to another instance loses its history.
 - **AI models:** each retrain bumps the tenant's model version in the database; every AI instance checks it before
   answering and reloads a tenant's model that another instance retrained.
 - **Metrics:** Prometheus discovers all instances via DNS, so each shows up as its own target.
@@ -385,7 +395,7 @@ AI microservice (`:8081`, `/ai/**` requires `X-API-KEY`)
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/ai/reply` | `{tenantId, message}` → `{reply}` |
+| POST | `/ai/reply` | `{tenantId, message, history?: [{question, answer}]}` → `{reply}` (history: earlier exchanges, oldest first, at most 20) |
 | POST | `/ai/train/{tenantId}` | `[{question, answer}]` — replace and retrain |
 | GET | `/health` | health check (no key) |
 
@@ -394,5 +404,3 @@ AI microservice (`:8081`, `/ai/**` requires `X-API-KEY`)
 - Two fixed roles; there are no finer-grained permissions (e.g. read-only access).
 - The `Origin` check stops other websites from embedding a tenant's chat in browsers, but a non-browser client
   can send any `Origin`; the per-IP rate limit is what bounds such traffic.
-- Claude answers each message on its own; follow-up questions that depend on earlier messages in the chat
-  ("and on weekends?") are not understood.

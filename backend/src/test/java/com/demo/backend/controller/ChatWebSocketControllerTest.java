@@ -1,5 +1,7 @@
 package com.demo.backend.controller;
 
+import com.demo.backend.chat.ChatHistory;
+import com.demo.backend.chat.InMemoryChatHistory;
 import com.demo.backend.chat.InMemoryChatRateLimiter;
 import com.demo.backend.entity.Tenant;
 import com.demo.backend.service.AiClientService;
@@ -27,18 +29,19 @@ class ChatWebSocketControllerTest {
     private final TenantService tenants = mock(TenantService.class);
     private final SimpMessagingTemplate messaging = mock(SimpMessagingTemplate.class);
     private final SimpleMeterRegistry metrics = new SimpleMeterRegistry();
+    private final ChatHistory history = new InMemoryChatHistory(10, Duration.ofMinutes(30));
     private ChatWebSocketController controller;
     private Tenant tenant;
 
     @BeforeEach
     void setUp() {
         controller = new ChatWebSocketController(ai, tenants, new InMemoryChatRateLimiter(3, Duration.ofMinutes(1)),
-                messaging, 20, List.of("https://admin.example.com"), metrics);
+                history, messaging, 20, List.of("https://admin.example.com"), metrics);
         tenant = new Tenant("Acme");
         tenant.setId(7L);
         tenant.rotateWidgetKey();
         when(tenants.findByWidgetKey(tenant.getWidgetKey())).thenReturn(Optional.of(tenant));
-        when(ai.askAi(eq(7L), anyString())).thenReturn("AI answer");
+        when(ai.askAi(eq(7L), anyString(), anyList())).thenReturn("AI answer");
     }
 
     private ChatMessage msg(String widgetKey, String content) {
@@ -52,7 +55,7 @@ class ChatWebSocketControllerTest {
     @Test
     void answersWithTheTenantResolvedFromTheWidgetKey() {
         assertEquals("AI answer", controller.answer(msg(tenant.getWidgetKey(), " hello "), "1.1.1.1", "https://shop.example"));
-        verify(ai).askAi(7L, "hello");
+        verify(ai).askAi(7L, "hello", List.of());
     }
 
     @Test
@@ -70,7 +73,7 @@ class ChatWebSocketControllerTest {
         assertEquals(ChatWebSocketController.ORIGIN_NOT_ALLOWED,
                 controller.answer(msg(tenant.getWidgetKey(), "hi"), "3.3.3.3", null));
         assertEquals("AI answer", controller.answer(msg(tenant.getWidgetKey(), "hi"), "4.4.4.4", "https://admin.example.com"));
-        verify(ai, times(2)).askAi(anyLong(), anyString());
+        verify(ai, times(2)).askAi(anyLong(), anyString(), anyList());
     }
 
     @Test
@@ -85,7 +88,7 @@ class ChatWebSocketControllerTest {
     void rateLimitIsCheckedFirst() {
         for (int i = 0; i < 3; i++) controller.answer(msg(tenant.getWidgetKey(), "hi"), "1.1.1.1", null);
         assertEquals(ChatWebSocketController.TOO_FAST, controller.answer(msg(tenant.getWidgetKey(), "hi"), "1.1.1.1", null));
-        verify(ai, times(3)).askAi(anyLong(), anyString());
+        verify(ai, times(3)).askAi(anyLong(), anyString(), anyList());
     }
 
     @Test
@@ -119,5 +122,28 @@ class ChatWebSocketControllerTest {
             controller.handle(m, SimpMessageHeaderAccessor.create());
         }
         verifyNoInteractions(messaging, ai);
+    }
+
+    @Test
+    void earlierExchangesOfTheSessionAreSentWithEachQuestion() {
+        when(ai.askAi(7L, "opening hours?", List.of())).thenReturn("9 to 5.");
+        when(ai.askAi(7L, "and on weekends?", List.of(new ChatHistory.Exchange("opening hours?", "9 to 5."))))
+                .thenReturn("Closed on weekends.");
+        assertEquals("9 to 5.", controller.answer(msg(tenant.getWidgetKey(), "opening hours?"), "1.1.1.1", null));
+        assertEquals("Closed on weekends.", controller.answer(msg(tenant.getWidgetKey(), "and on weekends?"), "1.1.1.1", null));
+
+        // Another session of the same tenant starts without history.
+        ChatMessage other = msg(tenant.getWidgetKey(), "hi");
+        other.sessionId = "session-other-1";
+        controller.answer(other, "2.2.2.2", null);
+        verify(ai).askAi(7L, "hi", List.of());
+    }
+
+    @Test
+    void failedAiCallsAreNotRemembered() {
+        when(ai.askAi(7L, "opening hours?", List.of())).thenReturn(AiClientService.UNAVAILABLE);
+        controller.answer(msg(tenant.getWidgetKey(), "opening hours?"), "1.1.1.1", null);
+        controller.answer(msg(tenant.getWidgetKey(), "hi"), "1.1.1.1", null);
+        verify(ai).askAi(7L, "hi", List.of());
     }
 }

@@ -1,5 +1,6 @@
 package com.demo.backend.service;
 
+import com.demo.backend.chat.ChatHistory;
 import com.demo.backend.entity.Faq;
 import com.demo.backend.security.SecretChecks;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -20,6 +21,8 @@ import java.util.Map;
 @Service
 public class AiClientService {
     private static final Logger log = LoggerFactory.getLogger(AiClientService.class);
+    /** Reply shown when the AI service cannot be reached. */
+    public static final String UNAVAILABLE = "Sorry, the assistant is unavailable right now. Please try again later.";
 
     /**
      * Generous enough for a Claude reply including one retry (the AI service's AI_LLM_TIMEOUT is 20s per attempt),
@@ -42,10 +45,12 @@ public class AiClientService {
         this.apiKey = SecretChecks.requireStrong("AI_API_KEY", apiKey, devMode);
     }
 
-    public String askAi(Long tenantId, String message) {
+    /** Answers {@code message}, given the chat's earlier exchanges (oldest first) for context. */
+    public String askAi(Long tenantId, String message, List<ChatHistory.Exchange> history) {
         Map<String, Object> body = Map.of(
                 "tenantId", tenantId,
-                "message", message
+                "message", message,
+                "history", history
         );
         Timer.Sample timer = Timer.start(metrics);
         try {
@@ -57,7 +62,7 @@ public class AiClientService {
         } catch (RestClientException e) {
             timer.stop(aiTimer("reply", "error"));
             log.warn("AI reply failed for tenant {}: {}", tenantId, e.getMessage());
-            return "Sorry, the assistant is unavailable right now. Please try again later.";
+            return UNAVAILABLE;
         }
     }
 
