@@ -36,7 +36,16 @@
 	# Health checks for load balancers and uptime monitors come from the backend's private management port;
 	# every other actuator endpoint (e.g. metrics) stays internal.
 	handle /actuator/health {
-		reverse_proxy backend:9090
+		reverse_proxy {
+			dynamic a {
+				name backend
+				port 9090
+				refresh 10s
+			}
+			lb_policy round_robin
+			lb_try_duration 5s
+			fail_duration 10s
+		}
 	}
 	handle /actuator/* {
 		respond 404
@@ -52,6 +61,20 @@
 		header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
 		# Sets X-Forwarded-For/-Proto; the backend trusts them (SERVER_FORWARD_HEADERS_STRATEGY=native)
 		# so rate limits see the real client IP. WebSocket upgrades are proxied automatically.
-		reverse_proxy backend:8080
+		#
+		# Every backend instance (--scale backend=N) is found via DNS. Each client IP sticks to one instance:
+		# SockJS fallback transports (used when a browser cannot open a WebSocket) send several requests per
+		# chat session that must reach the same instance, and cookie stickiness is unreliable for a widget
+		# embedded on other sites. A failed instance is skipped and its clients move to another one.
+		reverse_proxy {
+			dynamic a {
+				name backend
+				port 8080
+				refresh 10s
+			}
+			lb_policy ip_hash
+			lb_try_duration 5s
+			fail_duration 10s
+		}
 	}
 }

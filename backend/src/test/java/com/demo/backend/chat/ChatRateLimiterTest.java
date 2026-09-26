@@ -19,7 +19,7 @@ class ChatRateLimiterTest {
     }
 
     private final TestClock clock = new TestClock();
-    private final ChatRateLimiter limiter = new ChatRateLimiter(3, Duration.ofMinutes(1), clock);
+    private final InMemoryChatRateLimiter limiter = new InMemoryChatRateLimiter(3, Duration.ofMinutes(1), clock);
 
     @Test
     void limitsPerIpWithinTheWindow() {

@@ -132,8 +132,8 @@ The backend uses Spring Security with stateless JWT bearer tokens:
 - Failed logins are rate limited: 5 per client IP + username and 20 per client IP (any username) within a
   sliding 15-minute window. Further attempts get `429 Too Many Requests` with a `Retry-After` header, and the
   password is not checked while blocked. A successful login clears that user's counter for the IP. Usernames
-  are not locked for every IP, so an attacker cannot lock the real admin out from elsewhere. Counters live in
-  memory (per backend instance, reset on restart). Behind a reverse proxy, set
+  are not locked for every IP, so an attacker cannot lock the real admin out from elsewhere. Counters are shared by all backend instances when
+  `RATE_LIMIT_STORE=redis` (as in the production stack), otherwise kept in memory per instance. Behind a reverse proxy, set
   `server.forward-headers-strategy=native` (or `framework`) so the limiter sees the real client IP instead of
   the proxy's.
 - Set `JWT_SECRET` (32+ characters) anywhere beyond local development. Without it the backend signs with a
@@ -153,7 +153,7 @@ before the AI service is called:
   chat; the browser's `Origin` from the WebSocket handshake is checked against it. An empty list allows any
   website. The admin panel's own origin can always use the test chat.
 - **Rate limit:** at most `CHAT_MAX_MESSAGES_PER_IP` messages (default 20) per client IP per
-  `CHAT_RATE_LIMIT_WINDOW` (default 1 minute), in memory per backend instance.
+  `CHAT_RATE_LIMIT_WINDOW` (default 1 minute), shared by all backend instances when `RATE_LIMIT_STORE=redis`.
 - **Size limit:** messages longer than `CHAT_MAX_MESSAGE_LENGTH` (default 1000) characters are refused.
 
 Visitors get a short explanation instead of an answer when a check fails.
@@ -180,6 +180,7 @@ public development values from the `dev` profile are rejected outside it. Genera
 | backend | `LOGIN_RATE_LIMIT_WINDOW` | | `15m` |
 | backend | `CHAT_MAX_MESSAGES_PER_IP` / `CHAT_RATE_LIMIT_WINDOW` | | `20` / `1m` |
 | backend | `CHAT_MAX_MESSAGE_LENGTH` | | `1000` |
+| backend | `RATE_LIMIT_STORE` / `REDIS_URL` | `REDIS_URL` if `redis` | `memory` (`redis` + `redis://redis:6379` in the production stack) |
 | backend | `SERVER_FORWARD_HEADERS_STRATEGY` | behind a proxy | `native` in the production stack |
 | backend, ai-microservice | `MANAGEMENT_PORT` (health + metrics, private) | | `9090` / `9091` |
 | backend, ai-microservice | `LOG_FORMAT` | | `plain` (`json` in the production stack) |
@@ -197,6 +198,7 @@ terminates HTTPS with automatically issued and renewed Let's Encrypt certificate
                          │        ──▶ widget files (static)    https://API_HOST/widget/chat-widget.js
                          └──────────▶ backend :8080            https://API_HOST  (REST, wss://, SockJS)
                 private network:      backend ──▶ ai :8081 ──▶ postgres (both databases) ◀── backup (→ ./backups)
+                                      backend ──▶ redis (shared rate-limit counters)
 ```
 
 Only Caddy publishes ports; Postgres, the backend and the AI service are reachable only on the private Docker
@@ -233,6 +235,21 @@ separate hostnames because their paths overlap.
 
 - **Logs:** `LOG_FORMAT=json` (set in the production stack) writes one JSON object per line (`@timestamp`,
   `level`, `service`, `logger_name`, `message`, ...) for log collectors; the default is plain text.
+
+### Running several instances
+
+The backend and AI service can each run more than one instance:
+`docker compose -f docker-compose.prod.yml --env-file .env.production up -d --scale backend=2 --scale ai=2`.
+
+- **Load balancing:** Caddy finds every backend instance via DNS and keeps each client IP on one instance (SockJS
+  fallback transports need all requests of a chat session on the same instance, and cookies are unreliable for a
+  widget embedded on other sites). If an instance stops, its clients move to another within seconds.
+- **Rate limits:** the production stack keeps login and chat counters in Redis (`RATE_LIMIT_STORE=redis`), so all
+  instances enforce one shared limit. Without Redis (`RATE_LIMIT_STORE=memory`, the default outside the
+  production stack) each instance counts separately.
+- **AI models:** each retrain bumps the tenant's model version in the database; every AI instance checks it before
+  answering and reloads a tenant's model that another instance retrained.
+- **Metrics:** Prometheus discovers all instances via DNS, so each shows up as its own target.
 
 ### Backups
 
@@ -312,8 +329,6 @@ AI microservice (`:8081`, `/ai/**` requires `X-API-KEY`)
 ## Limitations (template scope)
 
 - Two fixed roles; there are no finer-grained permissions (e.g. read-only access).
-- Rate limits (login and chat) and the AI models are held in memory per instance: the production stack runs one
-  instance of each service; scaling out needs a shared store (e.g. Redis) or limits at the load balancer.
 - The `Origin` check stops other websites from embedding a tenant's chat in browsers, but a non-browser client
   can send any `Origin`; the per-IP rate limit is what bounds such traffic.
 - Answers are retrieval-only (best-matching FAQ), no generative model.

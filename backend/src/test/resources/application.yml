@@ -1,4 +1,10 @@
 spring:
+  # Redis is only connected when RATE_LIMIT_STORE=redis (see RateLimitConfig), not auto-configured.
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisReactiveAutoConfiguration
   datasource:
     url: jdbc:h2:mem:backend;DB_CLOSE_DELAY=-1
     username: sa
@@ -27,6 +33,12 @@ security:
     window: 15m
   cors:
     allowed-origins: http://localhost:5173
+
+# Rate limit counters (login and chat): "memory" for a single backend instance, "redis" to share them between
+# several instances (then REDIS_URL, e.g. redis://redis:6379, is required).
+rate-limit:
+  store: ${RATE_LIMIT_STORE:memory}
+  redis-url: ${REDIS_URL:}
 
 chat:
   max-message-length: 1000

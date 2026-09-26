@@ -1,5 +1,6 @@
 # Production stack. Only the "web" service (Caddy) is reachable from outside, on ports 80/443;
-# Postgres, the AI service and the backend live on a private network.
+# Postgres, Redis, the AI service and the backend live on a private network.
+# The backend and AI service can run several instances: --scale backend=2 --scale ai=2 (see README).
 #
 #   cp deploy/production.env.example .env.production   # then fill it in
 #   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
@@ -22,6 +23,19 @@ services:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d ai_microservice"]
       interval: 2s
       timeout: 5s
+      retries: 30
+    networks: [internal]
+
+  # Shared login/chat rate-limit counters, so several backend instances enforce one limit. Counters only
+  # (short-lived), so no persistence.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
       retries: 30
     networks: [internal]
 
@@ -55,8 +69,12 @@ services:
       # Trust X-Forwarded-* from Caddy (private network) so rate limits see real client IPs.
       SERVER_FORWARD_HEADERS_STRATEGY: native
       LOG_FORMAT: json
+      RATE_LIMIT_STORE: redis
+      REDIS_URL: redis://redis:6379
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       ai:
         condition: service_started

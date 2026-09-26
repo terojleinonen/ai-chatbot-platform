@@ -141,8 +141,10 @@ jobs:
           ADMIN_USERNAME=admin
           ADMIN_PASSWORD=$(openssl rand -hex 16)
           EOF
-      - name: Build and start the production stack
-        run: docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build --wait
+      # Two instances of the backend and AI service, to keep the scaled-out setup (shared Redis rate limits,
+      # AI model versioning, Caddy load balancing) tested.
+      - name: Build and start the production stack (2 backends, 2 AI services)
+        run: docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build --wait --scale backend=2 --scale ai=2
       - name: Smoke test over HTTPS
         run: deploy/smoke-test.sh .env.production
       - name: Service logs

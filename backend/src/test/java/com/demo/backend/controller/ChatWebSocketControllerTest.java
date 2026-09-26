@@ -1,6 +1,6 @@
 package com.demo.backend.controller;
 
-import com.demo.backend.chat.ChatRateLimiter;
+import com.demo.backend.chat.InMemoryChatRateLimiter;
 import com.demo.backend.entity.Tenant;
 import com.demo.backend.service.AiClientService;
 import com.demo.backend.service.TenantService;
@@ -32,7 +32,7 @@ class ChatWebSocketControllerTest {
 
     @BeforeEach
     void setUp() {
-        controller = new ChatWebSocketController(ai, tenants, new ChatRateLimiter(3, Duration.ofMinutes(1)),
+        controller = new ChatWebSocketController(ai, tenants, new InMemoryChatRateLimiter(3, Duration.ofMinutes(1)),
                 messaging, 20, List.of("https://admin.example.com"), metrics);
         tenant = new Tenant("Acme");
         tenant.setId(7L);

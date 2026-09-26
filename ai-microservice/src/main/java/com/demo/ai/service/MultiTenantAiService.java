@@ -1,8 +1,10 @@
 package com.demo.ai.service;
 
 import com.demo.ai.entity.TenantFaqEntity;
+import com.demo.ai.entity.TenantModelVersion;
 import com.demo.ai.model.TenantModel;
 import com.demo.ai.repository.TenantFaqRepository;
+import com.demo.ai.repository.TenantModelVersionRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -10,46 +12,63 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Keeps one in-memory model per tenant. Every retrain bumps the tenant's version in the database, and each
+ * reply checks it, so when several AI instances run, one that did not receive a retrain reloads the tenant's
+ * FAQs instead of answering from stale data.
+ */
 @Service
 public class MultiTenantAiService {
+    /** A model together with the database version its FAQs were read at (0 = no version row yet). */
+    private record Cached(TenantModel model, long version) {}
+
     private final TenantFaqRepository faqRepo;
-    private final Map<Long, TenantModel> models = new ConcurrentHashMap<>();
-
+    private final TenantModelVersionRepository versions;
     private final MeterRegistry metrics;
+    private final Map<Long, Cached> models = new ConcurrentHashMap<>();
 
-    public MultiTenantAiService(TenantFaqRepository faqRepo, MeterRegistry metrics) {
+    public MultiTenantAiService(TenantFaqRepository faqRepo, TenantModelVersionRepository versions, MeterRegistry metrics) {
         this.faqRepo = faqRepo;
+        this.versions = versions;
         this.metrics = metrics;
-        metrics.gaugeMapSize("ai.tenant.models", java.util.List.of(), models);
+        metrics.gaugeMapSize("ai.tenant.models", List.of(), models);
     }
 
     public void loadAllTenants() {
-        List<TenantFaqEntity> all = faqRepo.findAll();
+        // Versions first: FAQs read afterwards are at least that new, so a stale model is never labelled current.
+        Map<Long, Long> current = new HashMap<>();
+        for (TenantModelVersion v : versions.findAll()) current.put(v.getTenantId(), v.getVersion());
         Map<Long, List<TenantFaqEntity>> grouped = new HashMap<>();
-        for (TenantFaqEntity faq : all) {
+        for (TenantFaqEntity faq : faqRepo.findAll()) {
             grouped.computeIfAbsent(faq.getTenantId(), k -> new ArrayList<>()).add(faq);
         }
-        grouped.forEach((tenantId, faqs) -> models.put(tenantId, new TenantModel(faqs)));
+        grouped.forEach((tenantId, faqs) ->
+                models.put(tenantId, new Cached(new TenantModel(faqs), current.getOrDefault(tenantId, 0L))));
     }
 
     @Transactional
     public void replaceFaqsAndTrain(Long tenantId, List<TenantFaqEntity> faqs) {
         faqRepo.deleteByTenantId(tenantId);
         faqRepo.saveAll(faqs);
-        List<TenantFaqEntity> fresh = faqRepo.findByTenantId(tenantId);
-        models.put(tenantId, new TenantModel(fresh));
+        versions.bump(tenantId);
+        long version = versions.findVersion(tenantId).orElse(0L);
+        models.put(tenantId, new Cached(new TenantModel(faqRepo.findByTenantId(tenantId)), version));
     }
 
     public String reply(Long tenantId, String message) {
         if (tenantId == null) return "Missing tenant id.";
-        TenantModel model = models.get(tenantId);
-        if (model == null) {
+        long current = versions.findVersion(tenantId).orElse(0L);
+        Cached cached = models.get(tenantId);
+        if (cached == null || cached.version() != current) {
             List<TenantFaqEntity> faqs = faqRepo.findByTenantId(tenantId);
-            if (faqs.isEmpty()) return count("no_data", "This tenant has no training data yet.");
-            model = new TenantModel(faqs);
-            models.put(tenantId, model);
+            if (faqs.isEmpty()) {
+                models.remove(tenantId);
+                return count("no_data", "This tenant has no training data yet.");
+            }
+            cached = new Cached(new TenantModel(faqs), current);
+            models.put(tenantId, cached);
         }
-        String answer = model.getBestAnswer(message);
+        String answer = cached.model().getBestAnswer(message);
         String result = TenantModel.NO_MATCH.equals(answer) ? "no_match" : TenantModel.NO_DATA.equals(answer) ? "no_data" : "answered";
         return count(result, answer);
     }

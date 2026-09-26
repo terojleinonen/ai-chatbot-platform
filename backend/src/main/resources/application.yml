@@ -5,6 +5,12 @@ server:
   port: ${PORT:8080}
 
 spring:
+  # Redis is only connected when RATE_LIMIT_STORE=redis (see RateLimitConfig), not auto-configured.
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisReactiveAutoConfiguration
   datasource:
     url: ${DB_URL}
     username: ${DB_USER}
@@ -43,6 +49,12 @@ management:
 logging:
   # "json" for structured (JSON) logs, "plain" for the default console format.
   format: ${LOG_FORMAT:plain}
+
+# Rate limit counters (login and chat): "memory" for a single backend instance, "redis" to share them between
+# several instances (then REDIS_URL, e.g. redis://redis:6379, is required).
+rate-limit:
+  store: ${RATE_LIMIT_STORE:memory}
+  redis-url: ${REDIS_URL:}
 
 chat:
   # Public chat (widget) protection, applied before the AI service is called.
