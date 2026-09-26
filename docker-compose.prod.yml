@@ -47,6 +47,11 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       AI_API_KEY: ${AI_API_KEY:?set AI_API_KEY}
+      # Claude answers customer questions; without a key the service falls back to keyword matching.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_LLM_MODEL: ${AI_LLM_MODEL:-claude-opus-5}
+      AI_LLM_EFFORT: ${AI_LLM_EFFORT-low}   # empty (not unset) = model default
+      AI_LLM_MAX_CONTEXT_CHARS: ${AI_LLM_MAX_CONTEXT_CHARS:-24000}
       LOG_FORMAT: json
     depends_on:
       postgres:
