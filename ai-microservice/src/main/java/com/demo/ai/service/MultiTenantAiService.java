@@ -1,6 +1,7 @@
 package com.demo.ai.service;
 
 import com.anthropic.errors.AnthropicException;
+import com.demo.ai.dto.ChatExchange;
 import com.demo.ai.entity.TenantFaqEntity;
 import com.demo.ai.entity.TenantModelVersion;
 import com.demo.ai.llm.ClaudeResponder;
@@ -22,8 +23,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * reply checks it, so when several AI instances run, one that did not receive a retrain reloads the tenant's
  * FAQs instead of answering from stale data.
  * <p>
- * Questions are answered by Claude from the tenant's FAQs. Without an API key, or when the Claude call fails,
- * the answer comes from keyword matching (the FAQ whose question is most similar) so the chat keeps working.
+ * Questions are answered by Claude from the tenant's FAQs, with the chat's earlier exchanges for context. Without an API key, or when the Claude call fails,
+ * the answer comes from keyword matching (the FAQ whose question is most similar to the latest message) so the
+ * chat keeps working.
  */
 @Service
 public class MultiTenantAiService {
@@ -68,7 +70,8 @@ public class MultiTenantAiService {
         models.put(tenantId, new Cached(new TenantModel(faqRepo.findByTenantId(tenantId)), version));
     }
 
-    public String reply(Long tenantId, String message) {
+    /** Answers {@code message}; {@code history} (earlier exchanges of the chat, oldest first) gives Claude context. */
+    public String reply(Long tenantId, String message, List<ChatExchange> history) {
         if (tenantId == null) return "Missing tenant id.";
         long current = versions.findVersion(tenantId).orElse(0L);
         Cached cached = models.get(tenantId);
@@ -83,7 +86,7 @@ public class MultiTenantAiService {
         }
         if (llm.enabled()) {
             try {
-                ClaudeResponder.Reply reply = llm.answer(cached.model(), message);
+                ClaudeResponder.Reply reply = llm.answer(cached.model(), message, history);
                 return count(reply.answered() ? "answered" : "no_match", "llm", reply.text());
             } catch (AnthropicException | LlmUnusableReplyException e) {
                 log.warn("Claude reply failed for tenant {}, using keyword matching: {}", tenantId, e.toString());

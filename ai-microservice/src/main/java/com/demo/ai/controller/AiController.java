@@ -2,6 +2,7 @@ package com.demo.ai.controller;
 
 import com.demo.ai.dto.AiRequest;
 import com.demo.ai.dto.AiResponse;
+import com.demo.ai.dto.ChatExchange;
 import com.demo.ai.dto.TrainFaqDto;
 import com.demo.ai.entity.TenantFaqEntity;
 import com.demo.ai.service.MultiTenantAiService;
@@ -20,6 +21,9 @@ public class AiController {
     static final int MAX_FAQS = 5000;
     static final int MAX_QUESTION_LENGTH = 1000;
     static final int MAX_ANSWER_LENGTH = 3000;
+    static final int MAX_HISTORY = 20;
+    /** Earlier replies are Claude's, so they can be longer than an FAQ answer. */
+    static final int MAX_HISTORY_ANSWER_LENGTH = 20000;
 
     private final MultiTenantAiService aiService;
 
@@ -32,7 +36,16 @@ public class AiController {
         if (req.getTenantId() == null) throw badRequest("tenantId is required");
         if (req.getMessage() == null || req.getMessage().isBlank()) throw badRequest("message is required");
         if (req.getMessage().length() > MAX_MESSAGE_LENGTH) throw badRequest("message is too long");
-        String answer = aiService.reply(req.getTenantId(), req.getMessage());
+        List<ChatExchange> history = req.getHistory();
+        if (history.size() > MAX_HISTORY) throw badRequest("at most " + MAX_HISTORY + " history entries");
+        for (ChatExchange ex : history) {
+            if (ex == null || ex.question() == null || ex.question().isBlank() || ex.answer() == null || ex.answer().isBlank()
+                    || ex.question().length() > MAX_MESSAGE_LENGTH || ex.answer().length() > MAX_HISTORY_ANSWER_LENGTH) {
+                throw badRequest("each history entry needs a question (max " + MAX_MESSAGE_LENGTH + ") and answer (max "
+                        + MAX_HISTORY_ANSWER_LENGTH + ")");
+            }
+        }
+        String answer = aiService.reply(req.getTenantId(), req.getMessage(), history);
         return new AiResponse(answer);
     }
 

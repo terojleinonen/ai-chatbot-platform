@@ -1,6 +1,8 @@
 package com.demo.backend;
 
+import com.demo.backend.chat.ChatHistory;
 import com.demo.backend.chat.ChatRateLimiter;
+import com.demo.backend.chat.RedisChatHistory;
 import com.demo.backend.chat.RedisChatRateLimiter;
 import com.demo.backend.security.LoginRateLimiter;
 import com.demo.backend.security.RedisLoginRateLimiter;
@@ -39,6 +41,7 @@ class RedisStoreIntegrationTest {
 
     @Autowired LoginRateLimiter loginLimiter;
     @Autowired ChatRateLimiter chatLimiter;
+    @Autowired ChatHistory chatHistory;
     @Autowired HealthEndpoint health;
     @Autowired MockMvc mvc;
     @MockBean AiClientService ai;
@@ -47,6 +50,7 @@ class RedisStoreIntegrationTest {
     void usesRedisLimitersAndReportsRedisHealth() throws Exception {
         assertInstanceOf(RedisLoginRateLimiter.class, loginLimiter);
         assertInstanceOf(RedisChatRateLimiter.class, chatLimiter);
+        assertInstanceOf(RedisChatHistory.class, chatHistory);
         assertEquals(Status.UP, health.healthForPath("redis").getStatus());
 
         for (int i = 0; i < 5; i++) {

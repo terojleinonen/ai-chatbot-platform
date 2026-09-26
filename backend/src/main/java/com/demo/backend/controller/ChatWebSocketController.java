@@ -1,5 +1,6 @@
 package com.demo.backend.controller;
 
+import com.demo.backend.chat.ChatHistory;
 import com.demo.backend.chat.ChatRateLimiter;
 import com.demo.backend.entity.Tenant;
 import com.demo.backend.service.AiClientService;
@@ -21,7 +22,8 @@ import java.util.regex.Pattern;
 /**
  * Public chat used by the embeddable widget and the admin panel's test chat. Clients publish
  * {sessionId, widgetKey, content} to /app/chat.send and subscribe to /topic/replies/{sessionId}.
- * Every check below runs before the AI service is called.
+ * Every check below runs before the AI service is called. The session's recent exchanges go with each question,
+ * so the AI can answer follow-ups.
  */
 @Controller
 public class ChatWebSocketController {
@@ -34,6 +36,7 @@ public class ChatWebSocketController {
     private final AiClientService ai;
     private final TenantService tenants;
     private final ChatRateLimiter rateLimiter;
+    private final ChatHistory history;
     private final SimpMessagingTemplate messaging;
     private final int maxMessageLength;
     /** The admin panel's origins may test every tenant's chat, whatever the tenant's allowed websites. */
@@ -41,7 +44,7 @@ public class ChatWebSocketController {
     private final MeterRegistry metrics;
 
     public ChatWebSocketController(AiClientService ai, TenantService tenants, ChatRateLimiter rateLimiter,
-                                   SimpMessagingTemplate messaging,
+                                   ChatHistory history, SimpMessagingTemplate messaging,
                                    @Value("${chat.max-message-length}") int maxMessageLength,
                                    @Value("${security.cors.allowed-origins}") List<String> adminOrigins,
                                    MeterRegistry metrics) {
@@ -49,6 +52,7 @@ public class ChatWebSocketController {
         this.ai = ai;
         this.tenants = tenants;
         this.rateLimiter = rateLimiter;
+        this.history = history;
         this.messaging = messaging;
         this.maxMessageLength = maxMessageLength;
         this.adminOrigins = adminOrigins.stream().map(String::toLowerCase).toList();
@@ -75,7 +79,11 @@ public class ChatWebSocketController {
         if (tenant.isEmpty()) return count("unknown_widget", UNKNOWN_WIDGET);
         boolean adminPanel = origin != null && adminOrigins.contains(origin);
         if (!adminPanel && !tenant.get().allowsOrigin(origin)) return count("origin_not_allowed", ORIGIN_NOT_ALLOWED);
-        return count("answered", ai.askAi(tenant.get().getId(), content));
+        // Per tenant as well as session: the admin panel's test chat keeps its session id when switching tenants.
+        String sessionKey = tenant.get().getId() + ":" + msg.sessionId;
+        String reply = ai.askAi(tenant.get().getId(), content, history.recent(sessionKey));
+        if (!AiClientService.UNAVAILABLE.equals(reply)) history.append(sessionKey, new ChatHistory.Exchange(content, reply));
+        return count("answered", reply);
     }
 
     /** Counts chat messages by outcome (metric chat_messages_total{outcome=...}). */

@@ -1,6 +1,7 @@
 package com.demo.ai.llm;
 
 import com.anthropic.errors.AnthropicException;
+import com.demo.ai.dto.ChatExchange;
 import com.demo.ai.entity.TenantFaqEntity;
 import com.demo.ai.model.TenantModel;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -70,7 +71,7 @@ class ClaudeResponderTest {
     @Test
     void answersFromTheFaqsWithACachedSystemPrompt() {
         reply("We're open 9-17 on weekdays.", "end_turn");
-        ClaudeResponder.Reply r = responder(24000).answer(FAQS, "when are you open?");
+        ClaudeResponder.Reply r = responder(24000).answer(FAQS, "when are you open?", List.of());
 
         assertEquals(new ClaudeResponder.Reply("We're open 9-17 on weekdays.", true), r);
         assertEquals("claude-opus-5", lastRequest.get("model").asText());
@@ -88,14 +89,14 @@ class ClaudeResponderTest {
     @Test
     void questionsTheFaqsDoNotCoverAreNotAnswered() {
         reply("NO_ANSWER", "end_turn");
-        assertEquals(new ClaudeResponder.Reply(TenantModel.NO_MATCH, false), responder(24000).answer(FAQS, "what's your CEO's name?"));
+        assertEquals(new ClaudeResponder.Reply(TenantModel.NO_MATCH, false), responder(24000).answer(FAQS, "what's your CEO's name?", List.of()));
     }
 
     @Test
     void largeFaqSetsSendOnlyTheMostRelevantFaqsWithoutCaching() {
         reply("Yes, to most countries.", "end_turn");
         // Room for one FAQ only (45 and 51 characters).
-        responder(60).answer(FAQS, "do you ship internationally?");
+        responder(60).answer(FAQS, "do you ship internationally?", List.of());
         String faqBlock = lastRequest.at("/system/1/text").asText();
         assertTrue(faqBlock.contains("Do you ship internationally?"), faqBlock);
         assertFalse(faqBlock.contains("opening hours"), faqBlock);
@@ -105,16 +106,16 @@ class ClaudeResponderTest {
     @Test
     void refusedOrTruncatedRepliesAreNotShown() {
         reply("", "refusal");
-        assertThrows(LlmUnusableReplyException.class, () -> responder(24000).answer(FAQS, "hi"));
+        assertThrows(LlmUnusableReplyException.class, () -> responder(24000).answer(FAQS, "hi", List.of()));
         reply("We are open from", "max_tokens");
-        assertThrows(LlmUnusableReplyException.class, () -> responder(24000).answer(FAQS, "hi"));
+        assertThrows(LlmUnusableReplyException.class, () -> responder(24000).answer(FAQS, "hi", List.of()));
     }
 
     @Test
     void apiErrorsAreReported() {
         status = 529;
         responseBody = "{\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}";
-        assertThrows(AnthropicException.class, () -> responder(24000).answer(FAQS, "hi"));
+        assertThrows(AnthropicException.class, () -> responder(24000).answer(FAQS, "hi", List.of()));
         assertEquals(1, calls.get());   // max-retries 0
         assertEquals(1, metrics.timer("ai.llm.requests", "model", "claude-opus-5", "outcome", "error").count());
     }
@@ -123,5 +124,30 @@ class ClaudeResponderTest {
     void disabledWithoutAnApiKey() {
         assertFalse(new ClaudeResponder("", "", "claude-opus-5", "low", 2048, 24000, Duration.ofSeconds(5), 0, metrics).enabled());
         assertTrue(responder(24000).enabled());
+    }
+
+    @Test
+    void earlierExchangesComeBeforeTheQuestion() {
+        reply("We're closed on weekends.", "end_turn");
+        List<ChatExchange> history = List.of(new ChatExchange("what are your opening hours?", "9-17 on weekdays."));
+        responder(24000).answer(FAQS, "and on weekends?", history);
+
+        JsonNode messages = lastRequest.get("messages");
+        assertEquals(3, messages.size());
+        assertEquals("user", messages.get(0).get("role").asText());
+        assertEquals("what are your opening hours?", messages.get(0).get("content").asText());
+        assertEquals("assistant", messages.get(1).get("role").asText());
+        assertEquals("9-17 on weekdays.", messages.get(1).get("content").asText());
+        assertEquals("user", messages.get(2).get("role").asText());
+        assertEquals("and on weekends?", messages.get(2).get("content").asText());
+    }
+
+    @Test
+    void followUpsFindTheFaqsOfTheConversationInLargeFaqSets() {
+        reply("Yes.", "end_turn");
+        // Room for one FAQ: "which countries?" alone shares no words with either FAQ question.
+        responder(60).answer(FAQS, "which countries?",
+                List.of(new ChatExchange("do you ship internationally?", "Yes, to most countries.")));
+        assertTrue(lastRequest.at("/system/1/text").asText().contains("Do you ship internationally?"));
     }
 }
