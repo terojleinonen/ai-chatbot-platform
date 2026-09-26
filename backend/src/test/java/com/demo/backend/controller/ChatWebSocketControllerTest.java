@@ -1,6 +1,8 @@
 package com.demo.backend.controller;
 
 import com.demo.backend.chat.ChatHistory;
+import com.demo.backend.chat.ChatReply;
+import com.demo.backend.service.Cancellation;
 import com.demo.backend.chat.InMemoryChatHistory;
 import com.demo.backend.chat.InMemoryChatRateLimiter;
 import com.demo.backend.entity.Tenant;
@@ -41,11 +43,11 @@ class ChatWebSocketControllerTest {
         tenant.setId(7L);
         tenant.rotateWidgetKey();
         when(tenants.findByWidgetKey(tenant.getWidgetKey())).thenReturn(Optional.of(tenant));
-        when(ai.askAi(eq(7L), anyString(), anyList(), any())).thenReturn("AI answer");
+        when(ai.askAi(eq(7L), anyString(), anyList(), any(), any())).thenReturn("AI answer");
     }
 
     private String answer(ChatMessage m, String ip, String origin) {
-        return controller.answer(m, ip, origin, delta -> {});
+        return controller.answer(m, ip, origin, new ChatReply(m.sessionId, "reply-1", payload -> {}));
     }
 
     private ChatMessage msg(String widgetKey, String content) {
@@ -59,7 +61,7 @@ class ChatWebSocketControllerTest {
     @Test
     void answersWithTheTenantResolvedFromTheWidgetKey() {
         assertEquals("AI answer", answer(msg(tenant.getWidgetKey(), " hello "), "1.1.1.1", "https://shop.example"));
-        verify(ai).askAi(eq(7L), eq("hello"), eq(List.of()), any());
+        verify(ai).askAi(eq(7L), eq("hello"), eq(List.of()), any(), any());
     }
 
     @Test
@@ -77,7 +79,7 @@ class ChatWebSocketControllerTest {
         assertEquals(ChatWebSocketController.ORIGIN_NOT_ALLOWED,
                 answer(msg(tenant.getWidgetKey(), "hi"), "3.3.3.3", null));
         assertEquals("AI answer", answer(msg(tenant.getWidgetKey(), "hi"), "4.4.4.4", "https://admin.example.com"));
-        verify(ai, times(2)).askAi(anyLong(), anyString(), anyList(), any());
+        verify(ai, times(2)).askAi(anyLong(), anyString(), anyList(), any(), any());
     }
 
     @Test
@@ -92,7 +94,7 @@ class ChatWebSocketControllerTest {
     void rateLimitIsCheckedFirst() {
         for (int i = 0; i < 3; i++) answer(msg(tenant.getWidgetKey(), "hi"), "1.1.1.1", null);
         assertEquals(ChatWebSocketController.TOO_FAST, answer(msg(tenant.getWidgetKey(), "hi"), "1.1.1.1", null));
-        verify(ai, times(3)).askAi(anyLong(), anyString(), anyList(), any());
+        verify(ai, times(3)).askAi(anyLong(), anyString(), anyList(), any(), any());
     }
 
     @Test
@@ -105,7 +107,7 @@ class ChatWebSocketControllerTest {
         SimpMessageHeaderAccessor headers = SimpMessageHeaderAccessor.create();
         headers.setSessionAttributes(attrs);
 
-        when(ai.askAi(eq(7L), eq("hi"), anyList(), any())).thenAnswer(inv -> {
+        when(ai.askAi(eq(7L), eq("hi"), anyList(), any(), any())).thenAnswer(inv -> {
             java.util.function.Consumer<String> onDelta = inv.getArgument(3);
             onDelta.accept("Hello ");
             onDelta.accept("there");
@@ -152,8 +154,8 @@ class ChatWebSocketControllerTest {
 
     @Test
     void earlierExchangesOfTheSessionAreSentWithEachQuestion() {
-        when(ai.askAi(eq(7L), eq("opening hours?"), eq(List.of()), any())).thenReturn("9 to 5.");
-        when(ai.askAi(eq(7L), eq("and on weekends?"), eq(List.of(new ChatHistory.Exchange("opening hours?", "9 to 5."))), any()))
+        when(ai.askAi(eq(7L), eq("opening hours?"), eq(List.of()), any(), any())).thenReturn("9 to 5.");
+        when(ai.askAi(eq(7L), eq("and on weekends?"), eq(List.of(new ChatHistory.Exchange("opening hours?", "9 to 5."))), any(), any()))
                 .thenReturn("Closed on weekends.");
         assertEquals("9 to 5.", answer(msg(tenant.getWidgetKey(), "opening hours?"), "1.1.1.1", null));
         assertEquals("Closed on weekends.", answer(msg(tenant.getWidgetKey(), "and on weekends?"), "1.1.1.1", null));
@@ -162,14 +164,61 @@ class ChatWebSocketControllerTest {
         ChatMessage other = msg(tenant.getWidgetKey(), "hi");
         other.sessionId = "session-other-1";
         answer(other, "2.2.2.2", null);
-        verify(ai).askAi(eq(7L), eq("hi"), eq(List.of()), any());
+        verify(ai).askAi(eq(7L), eq("hi"), eq(List.of()), any(), any());
     }
 
     @Test
     void failedAiCallsAreNotRemembered() {
-        when(ai.askAi(eq(7L), eq("opening hours?"), eq(List.of()), any())).thenReturn(AiClientService.UNAVAILABLE);
+        when(ai.askAi(eq(7L), eq("opening hours?"), eq(List.of()), any(), any())).thenReturn(AiClientService.UNAVAILABLE);
         answer(msg(tenant.getWidgetKey(), "opening hours?"), "1.1.1.1", null);
         answer(msg(tenant.getWidgetKey(), "hi"), "1.1.1.1", null);
-        verify(ai).askAi(eq(7L), eq("hi"), eq(List.of()), any());
+        verify(ai).askAi(eq(7L), eq("hi"), eq(List.of()), any(), any());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void stopEndsTheReplyWithWhatWasShownAndCancelsTheAiCall() {
+        SimpMessageHeaderAccessor headers = SimpMessageHeaderAccessor.create();
+        headers.setSessionAttributes(new HashMap<>(Map.of(ChatHandshakeInterceptor.CLIENT_IP, "6.6.6.6")));
+        Cancellation[] cancellation = new Cancellation[1];
+        when(ai.askAi(eq(7L), eq("opening hours?"), anyList(), any(), any())).thenAnswer(inv -> {
+            java.util.function.Consumer<String> onDelta = inv.getArgument(3);
+            cancellation[0] = inv.getArgument(4);
+            onDelta.accept("We are ");
+            controller.stop(msg(null, null));         // the visitor presses Stop while the reply streams
+            onDelta.accept("open");                    // arrives after the stop: not shown
+            return AiClientService.UNAVAILABLE;        // what a cancelled call returns
+        });
+        controller.handle(msg(tenant.getWidgetKey(), "opening hours?"), headers);
+
+        assertEquals(true, cancellation[0].isCancelled());
+        var payloads = org.mockito.ArgumentCaptor.forClass(Object.class);
+        verify(messaging, times(2)).convertAndSend(eq("/topic/replies/session-12345678"), payloads.capture());
+        Map<String, Object> last = (Map<String, Object>) payloads.getAllValues().get(1);
+        assertEquals("We are ", last.get("reply"));
+        assertEquals(true, last.get("stopped"));
+        assertEquals(true, last.get("done"));
+        assertEquals(1.0, metrics.counter("chat.messages", "outcome", "stopped").count());
+        // The visitor saw "We are ", so that is what the history remembers.
+        assertEquals(List.of(new ChatHistory.Exchange("opening hours?", "We are ")), history.recent("7:session-12345678"));
+
+        // Stopping when nothing is in progress does nothing.
+        controller.stop(msg(null, null));
+        verify(messaging, times(2)).convertAndSend(eq("/topic/replies/session-12345678"), any(Object.class));
+    }
+
+    @Test
+    void stopBeforeAnyTextEndsTheReplyEmptyAndStoresNoHistory() {
+        when(ai.askAi(eq(7L), eq("hi"), anyList(), any(), any())).thenAnswer(inv -> {
+            controller.stop(msg(null, null));
+            return AiClientService.UNAVAILABLE;
+        });
+        SimpMessageHeaderAccessor headers = SimpMessageHeaderAccessor.create();
+        headers.setSessionAttributes(new HashMap<>(Map.of(ChatHandshakeInterceptor.CLIENT_IP, "7.7.7.7")));
+        controller.handle(msg(tenant.getWidgetKey(), "hi"), headers);
+        verify(messaging).convertAndSend(eq("/topic/replies/session-12345678"),
+                (Object) org.mockito.ArgumentMatchers.argThat((Object p) -> p instanceof Map<?, ?> m
+                        && "".equals(m.get("reply")) && Boolean.TRUE.equals(m.get("stopped"))));
+        assertEquals(List.of(), history.recent("7:session-12345678"));
     }
 }

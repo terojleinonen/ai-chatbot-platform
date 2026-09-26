@@ -22,7 +22,8 @@ export default function ChatWsPage() {
       brokerURL: WS_URL,
       reconnectDelay: 5000,
       onConnect: () => {
-        // Replies stream as {replyId, delta} messages, then {replyId, reply, done: true} with the complete text.
+        // Replies stream as {replyId, delta} messages, then {replyId, reply, done: true} with the complete text;
+        // a stopped reply ends with {..., stopped: true} and the text shown so far (empty if none was).
         client.subscribe(`/topic/replies/${sessionIdRef.current}`, (msg) => {
           const body = JSON.parse(msg.body);
           if (!body.done && typeof body.delta !== "string") return;
@@ -36,8 +37,9 @@ export default function ChatWsPage() {
           }
           setMessages(prev => {
             const i = prev.findIndex(m => m.replyId === body.replyId && m.streaming);
+            if (body.done && body.stopped && !body.reply) return prev.filter((m, j) => j !== i);
             if (body.done) {
-              const final = { from: "bot", replyId: body.replyId, text: body.reply, streaming: false };
+              const final = { from: "bot", replyId: body.replyId, text: body.reply, streaming: false, stopped: !!body.stopped };
               return i < 0 ? [...prev, final] : prev.map((m, j) => (j === i ? final : m));
             }
             if (i < 0) return [...prev, { from: "bot", replyId: body.replyId, text: body.delta, streaming: true }];
@@ -46,12 +48,26 @@ export default function ChatWsPage() {
         });
       },
       // Replies in progress won't arrive over a lost connection, so stop waiting for them.
-      onWebSocketClose: () => setAwaitingReplies(0)
+      onWebSocketClose: () => {
+        setAwaitingReplies(0);
+        startedRepliesRef.current.clear();
+        setMessages(prev => prev.map(m => (m.streaming ? { ...m, streaming: false } : m)));
+      }
     });
     client.activate();
     clientRef.current = client;
     return () => client.deactivate();
   }, []);
+
+  const replyInProgress = awaitingReplies > 0 || messages.some(m => m.streaming);
+
+  const stop = () => {
+    if (!clientRef.current?.connected) return;
+    clientRef.current.publish({
+      destination: "/app/chat.stop",
+      body: JSON.stringify({ sessionId: sessionIdRef.current })
+    });
+  };
 
   const send = () => {
     const tenant = tenants.find(t => String(t.id) === tenantId);
@@ -104,6 +120,7 @@ export default function ChatWsPage() {
               {m.text}
               {/* Cursor while the reply is still being written, as in the widget. */}
               {m.streaming && <span className="opacity-50" aria-hidden="true" data-testid="streaming-cursor">▍</span>}
+              {m.stopped && <span className="text-gray-500 italic"> (stopped)</span>}
             </span>
           </div>
         ))}
@@ -131,6 +148,11 @@ export default function ChatWsPage() {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") send(); }}
         />
+        {replyInProgress && (
+          <button className="border border-gray-400 bg-white px-4 py-2 rounded" onClick={stop} title="Stop the reply">
+            Stop
+          </button>
+        )}
         <button className="bg-green-600 text-white px-4 py-2 rounded" onClick={send}>
           Send
         </button>

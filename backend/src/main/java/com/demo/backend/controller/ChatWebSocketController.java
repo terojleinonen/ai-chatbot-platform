@@ -2,6 +2,7 @@ package com.demo.backend.controller;
 
 import com.demo.backend.chat.ChatHistory;
 import com.demo.backend.chat.ChatRateLimiter;
+import com.demo.backend.chat.ChatReply;
 import com.demo.backend.entity.Tenant;
 import com.demo.backend.service.AiClientService;
 import com.demo.backend.service.TenantService;
@@ -17,15 +18,18 @@ import org.springframework.stereotype.Controller;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
-import java.util.function.Consumer;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 /**
  * Public chat used by the embeddable widget and the admin panel's test chat. Clients publish
  * {sessionId, widgetKey, content} to /app/chat.send and subscribe to /topic/replies/{sessionId}. Each reply is
  * streamed there as {sessionId, replyId, delta} messages (text to append, as the AI writes it), followed by
- * {sessionId, replyId, reply, done: true} with the complete text, which replaces the deltas.
+ * {sessionId, replyId, reply, done: true} with the complete text, which replaces the deltas. Publishing {sessionId}
+ * to /app/chat.stop stops the session's replies in progress: each ends with {sessionId, replyId, reply: the text
+ * shown so far, done: true, stopped: true}, and the AI stops generating.
  * Every check below runs before the AI service is called. The session's recent exchanges go with each question,
  * so the AI can answer follow-ups.
  */
@@ -46,6 +50,8 @@ public class ChatWebSocketController {
     /** The admin panel's origins may test every tenant's chat, whatever the tenant's allowed websites. */
     private final List<String> adminOrigins;
     private final MeterRegistry metrics;
+    /** Replies in progress, by session id, so /app/chat.stop can end them. */
+    private final Map<String, Set<ChatReply>> inProgress = new ConcurrentHashMap<>();
 
     public ChatWebSocketController(AiClientService ai, TenantService tenants, ChatRateLimiter rateLimiter,
                                    ChatHistory history, SimpMessagingTemplate messaging,
@@ -65,18 +71,40 @@ public class ChatWebSocketController {
     @MessageMapping("/chat.send")
     public void handle(ChatMessage msg, SimpMessageHeaderAccessor headers) {
         // The session id becomes part of the reply topic, so only accept a plain random id.
-        if (msg == null || msg.sessionId == null || !SESSION_ID.matcher(msg.sessionId).matches()) return;
+        if (!validSession(msg)) return;
         Map<String, Object> attributes = headers.getSessionAttributes() != null ? headers.getSessionAttributes() : Map.of();
         String ip = (String) attributes.getOrDefault(ChatHandshakeInterceptor.CLIENT_IP, "unknown");
         String origin = (String) attributes.get(ChatHandshakeInterceptor.ORIGIN);
-        String replyId = UUID.randomUUID().toString();
-        String reply = answer(msg, ip, origin, delta -> send(msg.sessionId,
-                Map.of("sessionId", msg.sessionId, "replyId", replyId, "delta", delta)));
-        send(msg.sessionId, Map.of("sessionId", msg.sessionId, "replyId", replyId, "reply", reply, "done", true));
+        ChatReply reply = new ChatReply(msg.sessionId, UUID.randomUUID().toString(), payload -> send(msg.sessionId, payload));
+        inProgress.compute(msg.sessionId, (id, replies) -> {
+            Set<ChatReply> set = replies != null ? replies : ConcurrentHashMap.newKeySet();
+            set.add(reply);
+            return set;
+        });
+        try {
+            reply.finish(answer(msg, ip, origin, reply));
+        } finally {
+            inProgress.computeIfPresent(msg.sessionId, (id, replies) -> {
+                replies.remove(reply);
+                return replies.isEmpty() ? null : replies;
+            });
+        }
     }
 
-    /** Checks the message and returns the complete reply; AI text is also passed to {@code onDelta} as it streams. */
-    String answer(ChatMessage msg, String ip, String origin, Consumer<String> onDelta) {
+    /** Stops the session's replies in progress (the visitor pressed Stop). */
+    @MessageMapping("/chat.stop")
+    public void stop(ChatMessage msg) {
+        if (!validSession(msg)) return;
+        Set<ChatReply> replies = inProgress.get(msg.sessionId);
+        if (replies != null) replies.forEach(ChatReply::stop);
+    }
+
+    private static boolean validSession(ChatMessage msg) {
+        return msg != null && msg.sessionId != null && SESSION_ID.matcher(msg.sessionId).matches();
+    }
+
+    /** Checks the message and returns the complete reply; AI text is also streamed through {@code reply} as it arrives. */
+    String answer(ChatMessage msg, String ip, String origin, ChatReply reply) {
         if (!rateLimiter.tryAcquire(ip)) return count("rate_limited", TOO_FAST);
         String content = msg.content == null ? "" : msg.content.trim();
         if (content.isEmpty()) return count("empty", EMPTY);
@@ -89,9 +117,15 @@ public class ChatWebSocketController {
         if (!adminPanel && !tenant.get().allowsOrigin(origin)) return count("origin_not_allowed", ORIGIN_NOT_ALLOWED);
         // Per tenant as well as session: the admin panel's test chat keeps its session id when switching tenants.
         String sessionKey = tenant.get().getId() + ":" + msg.sessionId;
-        String reply = ai.askAi(tenant.get().getId(), content, history.recent(sessionKey), onDelta);
-        if (!AiClientService.UNAVAILABLE.equals(reply)) history.append(sessionKey, new ChatHistory.Exchange(content, reply));
-        return count("answered", reply);
+        String answer = ai.askAi(tenant.get().getId(), content, history.recent(sessionKey), reply::delta, reply.cancellation());
+        if (reply.isStopped()) {
+            // Remember what the visitor saw, so a follow-up can refer to it.
+            String shown = reply.streamedText();
+            if (!shown.isBlank()) history.append(sessionKey, new ChatHistory.Exchange(content, shown));
+            return count("stopped", shown);
+        }
+        if (!AiClientService.UNAVAILABLE.equals(answer)) history.append(sessionKey, new ChatHistory.Exchange(content, answer));
+        return count("answered", answer);
     }
 
     /** Counts chat messages by outcome (metric chat_messages_total{outcome=...}). */

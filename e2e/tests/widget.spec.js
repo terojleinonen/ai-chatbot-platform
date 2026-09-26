@@ -73,6 +73,8 @@ test("a typing indicator shows until the reply starts, below the conversation", 
   expect(changes.at(-1)).toBe("hidden");
   await expect(typing).toHaveAttribute("role", "status");
   await expect(typing).toContainText("The assistant is typing");
+  // Nothing in progress, so no Stop button.
+  await expect(page.locator("#cw-stop")).toBeHidden();
   // It stays the last element, below the messages.
   expect(await page.evaluate(() => document.getElementById("cw-messages").lastElementChild.id)).toBe("cw-typing");
 });

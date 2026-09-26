@@ -8,6 +8,8 @@ import com.demo.ai.entity.TenantFaqEntity;
 import com.demo.ai.service.MultiTenantAiService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
@@ -31,6 +33,7 @@ public class AiController {
     /** Earlier replies are Claude's, so they can be longer than an FAQ answer. */
     static final int MAX_HISTORY_ANSWER_LENGTH = 20000;
 
+    private static final Logger log = LoggerFactory.getLogger(AiController.class);
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final MultiTenantAiService aiService;
@@ -48,6 +51,7 @@ public class AiController {
     /**
      * The reply as newline-delimited JSON, streamed while Claude writes it: any number of {"delta": text} lines, then
      * {"reply": complete text, "done": true}, which replaces the deltas (they differ if Claude failed part-way).
+     * If the caller disconnects (the visitor stopped the reply), generation stops at the next write.
      */
     @PostMapping("/reply/stream")
     public void replyStream(@RequestBody AiRequest req, HttpServletResponse response) throws IOException {
@@ -55,9 +59,13 @@ public class AiController {
         response.setContentType("application/x-ndjson");
         response.setCharacterEncoding("UTF-8");
         OutputStream out = response.getOutputStream();
-        String reply = aiService.reply(req.getTenantId(), req.getMessage(), req.getHistory(),
-                text -> writeLine(out, Map.of("delta", text)));
-        writeLine(out, Map.of("reply", reply, "done", true));
+        try {
+            String reply = aiService.reply(req.getTenantId(), req.getMessage(), req.getHistory(),
+                    text -> writeLine(out, Map.of("delta", text)));
+            writeLine(out, Map.of("reply", reply, "done", true));
+        } catch (UncheckedIOException disconnected) {
+            log.debug("Caller disconnected; stopped the reply for tenant {}", req.getTenantId());
+        }
     }
 
     /** Writes and flushes one JSON line; a disconnected client aborts the reply (and with it the Claude stream). */
