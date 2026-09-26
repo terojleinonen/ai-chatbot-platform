@@ -198,7 +198,9 @@ terminates HTTPS with automatically issued and renewed Let's Encrypt certificate
 ```
 
 Only Caddy publishes ports; Postgres, the backend and the AI service are reachable only on the private Docker
-network. Caddy redirects HTTP to HTTPS and sends HSTS and other security headers. The admin panel and the API use
+network. Caddy redirects HTTP to HTTPS and sends HSTS and other security headers, including a strict
+Content-Security-Policy for the admin panel (only its own scripts and styles; API calls only to `API_HOST`), which
+limits what an injected script could do with the login token the admin panel keeps in `localStorage`. The admin panel and the API use
 separate hostnames because their paths overlap.
 
 1. Point DNS for both hostnames (e.g. `admin.example.com`, `api.example.com`) at the server and open ports 80 and

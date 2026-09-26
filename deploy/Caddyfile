@@ -19,6 +19,9 @@
 {$ADMIN_HOST} {
 	import security_headers
 	header X-Frame-Options "DENY"
+	# Strict CSP: only this site's own scripts and styles, and API calls only to API_HOST. It limits what an
+	# injected script could do with the login token the admin panel keeps in localStorage.
+	header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://{$API_HOST} wss://{$API_HOST}; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 	encode zstd gzip
 	root * /srv/admin
 	try_files {path} /index.html
@@ -36,6 +39,8 @@
 	}
 
 	handle {
+		# API responses are JSON, never pages to render or frame.
+		header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
 		# Sets X-Forwarded-For/-Proto; the backend trusts them (SERVER_FORWARD_HEADERS_STRATEGY=native)
 		# so rate limits see the real client IP. WebSocket upgrades are proxied automatically.
 		reverse_proxy backend:8080

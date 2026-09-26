@@ -31,6 +31,10 @@ check "HTTP redirects to HTTPS" "$("${CURL[@]}" -o /dev/null -w '%{http_code} %{
 hsts=$("${CURL[@]}" -D - -o /dev/null "$API/actuator/health" | tr -d '\r' | grep -i '^strict-transport-security:')
 [ -n "$hsts" ] && pass "HSTS header present" || fail "HSTS header present"
 
+csp=$("${CURL[@]}" -D - -o /dev/null "$ADMIN/" | tr -d '\r' | grep -i '^content-security-policy:')
+[[ "$csp" == *"script-src 'self'"* && "$csp" == *"connect-src 'self' https://$API_HOST wss://$API_HOST"* ]] \
+  && pass "admin panel sends a strict Content-Security-Policy" || fail "admin panel sends a strict Content-Security-Policy" "$csp"
+
 admin_page=$("${CURL[@]}" "$ADMIN/")
 [[ "$admin_page" == *"<title>AI Chatbot Admin</title>"* ]] && pass "admin panel served" || fail "admin panel served"
 check "admin panel routes fall back to the SPA" "$("${CURL[@]}" -o /dev/null -w '%{http_code}' "$ADMIN/tenants")" 200
