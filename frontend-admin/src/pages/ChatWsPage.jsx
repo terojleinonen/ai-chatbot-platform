@@ -7,8 +7,13 @@ export default function ChatWsPage() {
   const [tenantId, setTenantId] = useState("");
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
+  // Messages sent whose reply hasn't started arriving yet; the typing indicator shows while this is above 0.
+  const [awaitingReplies, setAwaitingReplies] = useState(0);
   const clientRef = useRef(null);
   const sessionIdRef = useRef(crypto.randomUUID());
+  // Reply ids that have started arriving (kept outside state updaters, which StrictMode runs twice).
+  const startedRepliesRef = useRef(new Set());
+  const messagesEndRef = useRef(null);
 
   useEffect(() => { api.tenantOptions().then(setTenants); }, []);
 
@@ -20,18 +25,28 @@ export default function ChatWsPage() {
         // Replies stream as {replyId, delta} messages, then {replyId, reply, done: true} with the complete text.
         client.subscribe(`/topic/replies/${sessionIdRef.current}`, (msg) => {
           const body = JSON.parse(msg.body);
+          if (!body.done && typeof body.delta !== "string") return;
+          const started = startedRepliesRef.current;
+          if (!started.has(body.replyId)) {
+            // The first message of a reply means the assistant has started answering.
+            setAwaitingReplies(n => Math.max(0, n - 1));
+            if (!body.done) started.add(body.replyId);
+          } else if (body.done) {
+            started.delete(body.replyId);
+          }
           setMessages(prev => {
             const i = prev.findIndex(m => m.replyId === body.replyId && m.streaming);
             if (body.done) {
               const final = { from: "bot", replyId: body.replyId, text: body.reply, streaming: false };
               return i < 0 ? [...prev, final] : prev.map((m, j) => (j === i ? final : m));
             }
-            if (typeof body.delta !== "string") return prev;
             if (i < 0) return [...prev, { from: "bot", replyId: body.replyId, text: body.delta, streaming: true }];
             return prev.map((m, j) => (j === i ? { ...m, text: m.text + body.delta } : m));
           });
         });
-      }
+      },
+      // Replies in progress won't arrive over a lost connection, so stop waiting for them.
+      onWebSocketClose: () => setAwaitingReplies(0)
     });
     client.activate();
     clientRef.current = client;
@@ -51,8 +66,14 @@ export default function ChatWsPage() {
       body: JSON.stringify(payload)
     });
     setMessages(prev => [...prev, { from: "user", text: input }]);
+    setAwaitingReplies(n => n + 1);
     setInput("");
   };
+
+  // Keep the newest message (or the typing indicator) in view.
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [messages, awaitingReplies]);
 
   return (
     <div>
@@ -85,6 +106,21 @@ export default function ChatWsPage() {
             </span>
           </div>
         ))}
+        {awaitingReplies > 0 && (
+          <div className="mb-1 text-left" data-testid="typing-indicator" role="status">
+            <span className="inline-flex gap-1 px-3 py-2 rounded bg-gray-200" aria-hidden="true">
+              {[0, 150, 300].map(delay => (
+                <span
+                  key={delay}
+                  className="w-1.5 h-1.5 rounded-full bg-gray-500 animate-bounce motion-reduce:animate-none"
+                  style={{ animationDelay: `${delay}ms` }}
+                />
+              ))}
+            </span>
+            <span className="sr-only">The assistant is typing</span>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
       </div>
       <div className="flex gap-2">
         <input

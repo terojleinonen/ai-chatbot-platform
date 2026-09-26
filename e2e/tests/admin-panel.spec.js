@@ -1,6 +1,6 @@
 // @ts-check
 const { test, expect } = require("@playwright/test");
-const { ADMIN_PASSWORD, unique, uiLogin, sidebar } = require("./helpers");
+const { ADMIN_PASSWORD, unique, uiLogin, sidebar, adminToken, createTenant, createFaq } = require("./helpers");
 
 test.describe("login and sessions", () => {
   test("unauthenticated visitors are sent to the login page", async ({ page }) => {
@@ -77,4 +77,33 @@ test("super admin creates a tenant and FAQ, and the chat answers from it", async
   await other.waitForTimeout(1000);
   await expect(other.locator(".bg-gray-200")).toHaveCount(0);
   expect(errors).toEqual([]);
+});
+
+test("the test chat shows a typing indicator until the reply starts", async ({ page, request }) => {
+  const token = await adminToken(request);
+  const tenant = await createTenant(request, token);
+  await createFaq(request, token, tenant.id, "Do you ship abroad?", "Yes, worldwide.");
+  await uiLogin(page, "admin", ADMIN_PASSWORD);
+  await page.goto("/chat");
+  await page.locator("select").selectOption({ label: tenant.name });
+  const typing = page.getByTestId("typing-indicator");
+  await expect(typing).toHaveCount(0);
+
+  // Replies can arrive within milliseconds, so record whether the indicator was ever on the page.
+  await page.evaluate(() => {
+    window.typingSeen = [];
+    new MutationObserver(() => {
+      window.typingSeen.push(!!document.querySelector('[data-testid="typing-indicator"]'));
+    }).observe(document.body, { childList: true, subtree: true });
+  });
+  const input = page.getByPlaceholder("Type a message...");
+  // The STOMP connection opens asynchronously; resend until a reply arrives.
+  await expect(async () => {
+    await input.fill("do you ship abroad?");
+    await input.press("Enter");
+    await expect(page.locator(".bg-gray-200", { hasText: "Yes, worldwide." }).first()).toBeVisible({ timeout: 3000 });
+  }).toPass({ timeout: 20_000 });
+
+  await expect(typing).toHaveCount(0);
+  expect(await page.evaluate(() => window.typingSeen)).toContain(true);
 });
