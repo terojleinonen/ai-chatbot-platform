@@ -86,4 +86,24 @@ class AiControllerTest {
                 java.util.Map.of("reply", "We're open 9 to 5.", "done", true)), lines);
         assertThrows(ResponseStatusException.class, () -> controller.replyStream(req(1L, " "), new MockHttpServletResponse()));
     }
+
+    @Test
+    void aDisconnectedCallerEndsTheStreamQuietly() throws Exception {
+        when(service.reply(eq(1L), eq("hours?"), eq(List.of()), any())).thenAnswer(inv -> {
+            java.util.function.Consumer<String> onText = inv.getArgument(3);
+            onText.accept("We're open ");   // the write fails: the backend hung up
+            return "unreachable";
+        });
+        MockHttpServletResponse response = new MockHttpServletResponse() {
+            @Override
+            public jakarta.servlet.ServletOutputStream getOutputStream() {
+                return new jakarta.servlet.ServletOutputStream() {
+                    @Override public boolean isReady() { return true; }
+                    @Override public void setWriteListener(jakarta.servlet.WriteListener listener) {}
+                    @Override public void write(int b) throws java.io.IOException { throw new java.io.IOException("Broken pipe"); }
+                };
+            }
+        };
+        assertDoesNotThrow(() -> controller.replyStream(req(1L, "hours?"), response));
+    }
 }

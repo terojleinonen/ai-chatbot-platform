@@ -22,6 +22,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -152,6 +153,10 @@ public class ClaudeResponder {
             boolean answered = !text.equals(NO_ANSWER);
             outcome = answered ? "answered" : "no_answer";
             return new Reply(answered ? text : TenantModel.NO_MATCH, answered);
+        } catch (UncheckedIOException callerGone) {
+            // Thrown by onText: whoever the text was for disconnected. Closing the stream stops Claude generating.
+            outcome = "cancelled";
+            throw callerGone;
         } finally {
             timer.stop(metrics.timer("ai.llm.requests", "model", model, "outcome", outcome));
         }

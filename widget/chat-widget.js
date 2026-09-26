@@ -33,6 +33,7 @@
             </div>
             <div id="cw-input-bar">
                 <input id="cw-input" placeholder="Type a message..." />
+                <button id="cw-stop" type="button" title="Stop the reply" aria-label="Stop the reply" hidden>■</button>
                 <div id="cw-send">➤</div>
             </div>
         </div>
@@ -49,6 +50,7 @@
     };
 
     document.getElementById("cw-send").onclick = sendMessage;
+    document.getElementById("cw-stop").onclick = stopReplies;
     document.getElementById("cw-input").addEventListener("keydown", (e) => {
       if (e.key === "Enter") sendMessage();
     });
@@ -61,22 +63,31 @@
 
     stompClient.connect({}, () => {
       // A reply arrives as {replyId, delta} messages (text to append as the AI writes it), then
-      // {replyId, reply, done: true} with the complete text, which replaces what was streamed.
+      // {replyId, reply, done: true} with the complete text, which replaces what was streamed. A reply the visitor
+      // stopped ends with {..., stopped: true} and the text shown so far (empty if none was).
       stompClient.subscribe("/topic/replies/" + sessionId, (msg) => {
         const body = JSON.parse(msg.body);
         // The first message of a reply means the assistant has started answering.
         if (!streaming[body.replyId] && (body.done || typeof body.delta === "string")) replyStarted();
-        if (body.done) {
+        if (body.done && body.stopped && !body.reply) {
+          // Stopped before any text: nothing to keep.
+          if (streaming[body.replyId]) streaming[body.replyId].remove();
+          delete streaming[body.replyId];
+          updateStop();
+        } else if (body.done) {
           const div = streaming[body.replyId] || addMessage("", "bot");
           delete streaming[body.replyId];
           div.textContent = body.reply;
           div.classList.remove("cw-streaming");
+          if (body.stopped) div.classList.add("cw-stopped");
+          updateStop();
           scrollToEnd();
         } else if (typeof body.delta === "string") {
           let div = streaming[body.replyId];
           if (!div) {
             div = streaming[body.replyId] = addMessage("", "bot");
             div.classList.add("cw-streaming");
+            updateStop();
           }
           div.textContent += body.delta;
           scrollToEnd();
@@ -85,6 +96,10 @@
     }, () => {
       // Connection lost: replies in progress won't arrive, so stop waiting for them; retry after a short delay.
       awaitingReplies = 0;
+      Object.keys(streaming).forEach((id) => {
+        streaming[id].classList.remove("cw-streaming");
+        delete streaming[id];
+      });
       updateTyping();
       setTimeout(connectWs, 5000);
     });
@@ -108,7 +123,18 @@
 
   function updateTyping() {
     document.getElementById("cw-typing").hidden = awaitingReplies === 0;
+    updateStop();
     scrollToEnd();
+  }
+
+  // The Stop button shows while a reply is being prepared or streamed.
+  function updateStop() {
+    document.getElementById("cw-stop").hidden = awaitingReplies === 0 && Object.keys(streaming).length === 0;
+  }
+
+  function stopReplies() {
+    if (!stompClient || !stompClient.connected) return;
+    stompClient.send("/app/chat.stop", {}, JSON.stringify({ sessionId: sessionId }));
   }
 
   function scrollToEnd() {

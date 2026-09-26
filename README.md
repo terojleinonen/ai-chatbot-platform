@@ -28,7 +28,8 @@ A multi-tenant FAQ chatbot platform:
   `/topic/replies/{sessionId}`. Each reply streams there as `{sessionId, replyId, delta}` messages (text to append
   as Claude writes it), then `{sessionId, replyId, reply, done: true}` with the complete text, which replaces the
   deltas; replies that are not streamed (keyword matching, errors, rejected messages) are just the final message.
-  See "Public chat protection" below.
+  Publishing `{sessionId}` to `/app/chat.stop` stops the session's replies in progress: each ends with
+  `{sessionId, replyId, reply: the text shown so far, done: true, stopped: true}`. See "Public chat protection" below.
 - **Schema**: both services manage their tables with Flyway migrations (`src/main/resources/db/migration`);
   Hibernate only validates. Databases created before Flyway are adopted automatically (baselined at version 1).
 
@@ -55,6 +56,10 @@ cover the question it says so ("I'm not sure yet...") instead of guessing.
   (Claude → AI service `/ai/reply/stream` → backend → STOMP). Claude's "not covered" marker is never streamed. If
   Claude fails part-way through a reply, the final message replaces the partial text with the keyword-matching
   answer.
+- **Stopping:** while a reply is being prepared or streamed, the widget and the test chat show a **Stop** button.
+  It keeps the text shown so far (marked "(stopped)"; nothing if no text had arrived) and remembers that in the
+  chat history. The backend drops its connection to the AI service, which stops the Claude request at its next
+  write, so a stopped reply stops costing output tokens within a few words.
 - **Conversation history:** the backend remembers each chat's last `CHAT_HISTORY_MAX_EXCHANGES` (default 10)
   question/answer exchanges and sends them with every new question, so Claude understands follow-ups ("and on
   weekends?"); the relevant-FAQ selection for large FAQ sets also looks at the two previous questions. A chat is
@@ -276,11 +281,11 @@ separate hostnames because their paths overlap.
 
   | Metric | Labels | Meaning |
   |---|---|---|
-  | `chat_messages_total` | `outcome` = answered, rate_limited, empty, too_long, unknown_widget, origin_not_allowed | public chat messages |
+  | `chat_messages_total` | `outcome` = answered, stopped, rate_limited, empty, too_long, unknown_widget, origin_not_allowed | public chat messages |
   | `auth_logins_total` | `outcome` = success, failure, rate_limited | admin logins |
-  | `ai_requests_seconds` | `operation` = reply, train; `outcome` = success, error | backend → AI service calls (latency histogram) |
+  | `ai_requests_seconds` | `operation` = reply, train; `outcome` = success, error, cancelled | backend → AI service calls (latency histogram) |
   | `ai_replies_total` | `result` = answered, no_match, no_data; `source` = llm, keyword, none | how often the AI could answer, and whether Claude or the keyword fallback did |
-  | `ai_llm_requests_seconds` | `model`; `outcome` = answered, no_answer, refusal, truncated, empty, error | Claude API calls (latency histogram) |
+  | `ai_llm_requests_seconds` | `model`; `outcome` = answered, no_answer, refusal, truncated, empty, error, cancelled | Claude API calls (latency histogram) |
   | `ai_llm_tokens_total` | `model`; `type` = input, output, cache_read, cache_write | Claude token usage (drives cost) |
   | `ai_tenant_models` | | tenant models loaded in the AI service |
 

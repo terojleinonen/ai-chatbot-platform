@@ -205,4 +205,16 @@ class ClaudeResponderTest {
                 + "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n";
         assertThrows(AnthropicException.class, () -> ask(responder(24000), "hi", List.of()));
     }
+
+    @Test
+    void aDisconnectedCallerStopsTheStream() {
+        reply("end_turn", "We're open ", "9-17 ", "on weekdays.");
+        java.util.concurrent.atomic.AtomicInteger delivered = new java.util.concurrent.atomic.AtomicInteger();
+        assertThrows(java.io.UncheckedIOException.class, () -> responder(24000).answer(FAQS, "hours?", List.of(), text -> {
+            delivered.incrementAndGet();
+            throw new java.io.UncheckedIOException(new java.io.IOException("Broken pipe"));
+        }));
+        assertEquals(1, delivered.get());
+        assertEquals(1, metrics.timer("ai.llm.requests", "model", "claude-opus-5", "outcome", "cancelled").count());
+    }
 }
