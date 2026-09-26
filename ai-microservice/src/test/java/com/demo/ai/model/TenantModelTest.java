@@ -40,4 +40,11 @@ class TenantModelTest {
     void handlesEmptyFaqList() {
         assertEquals("No FAQ data available for this tenant yet.", new TenantModel(List.of()).getBestAnswer("hi"));
     }
+
+    @Test
+    void ranksFaqsByRelevance() {
+        List<String> ranked = model.rank("do you ship to other countries").stream().map(TenantFaqEntity::getQuestion).toList();
+        assertEquals("Do you ship internationally?", ranked.get(0));
+        assertEquals(3, ranked.size());
+    }
 }

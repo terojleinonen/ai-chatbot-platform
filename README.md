@@ -5,7 +5,7 @@
 A multi-tenant FAQ chatbot platform:
 
 - `backend/` — Spring Boot main backend (port 8080): tenants, FAQs, STOMP WebSocket chat
-- `ai-microservice/` — Spring Boot AI engine (port 8081): per-tenant TF-IDF + cosine-similarity FAQ matching
+- `ai-microservice/` — Spring Boot AI engine (port 8081): answers questions with Claude from each tenant's FAQs
 - `frontend-admin/` — React + Vite + Tailwind admin panel (port 5173)
 - `widget/` — Embeddable JavaScript chat widget for customer websites
 
@@ -21,13 +21,40 @@ A multi-tenant FAQ chatbot platform:
 - The **backend** owns tenants and FAQs. Every FAQ create/update/delete/import pushes the tenant's
   full FAQ list to the AI service (`POST /ai/train/{tenantId}`), which replaces its copy and rebuilds
   that tenant's model. If the AI service is down the change is still saved; use **Retrain AI** later.
-- The **AI microservice** keeps one in-memory `TenantModel` per tenant (loaded from its DB on startup).
-  A question is answered with the FAQ whose question has the highest TF-IDF cosine similarity,
-  if the score is above 0.2; otherwise it asks the user to rephrase.
+- The **AI microservice** answers each question with Claude, grounded in the tenant's FAQs (see "Answers from
+  Claude" below). It keeps each tenant's FAQs in memory (loaded from its DB on startup), indexed with TF-IDF for
+  picking relevant FAQs and for the keyword-matching fallback.
 - **Chat**: clients publish `{sessionId, widgetKey, content}` to `/app/chat.send` and subscribe to
   `/topic/replies/{sessionId}`. See "Public chat protection" below.
 - **Schema**: both services manage their tables with Flyway migrations (`src/main/resources/db/migration`);
   Hibernate only validates. Databases created before Flyway are adopted automatically (baselined at version 1).
+
+## Answers from Claude
+
+The AI service sends the tenant's FAQs to Claude as the system prompt, with instructions to answer only from
+them, and the customer's message as the user turn. Claude replies in the customer's language; when the FAQs don't
+cover the question it says so ("I'm not sure yet...") instead of guessing.
+
+- **Setup:** set `ANTHROPIC_API_KEY` for the AI service (a key from https://console.anthropic.com). Without it the
+  service logs a warning and falls back to **keyword matching**: the FAQ whose question has the highest TF-IDF
+  cosine similarity (above 0.2) is returned verbatim. Tests, CI and local development work without a key.
+- **Failures:** if a Claude call fails (network, rate limit, overload, timeout after `AI_LLM_TIMEOUT` and
+  `AI_LLM_MAX_RETRIES` retries) or the reply can't be shown (refused, cut off at `AI_LLM_MAX_TOKENS`), that
+  question is answered by keyword matching, so the chat keeps working. `ai_replies_total{source="keyword"}` rising
+  while a key is set means Claude calls are failing; the AI service logs why.
+- **Which FAQs are sent:** all of a tenant's FAQs when they total at most `AI_LLM_MAX_CONTEXT_CHARS` characters
+  (default 24000, roughly 6k tokens). That prompt is identical for every question to the tenant until its FAQs
+  change, so it is prompt-cached (for 5 minutes after each use; `claude-opus-5` caches prompts from 512 tokens):
+  questions within that window read it from the cache at a tenth of the input price. Larger
+  FAQ sets send the most relevant FAQs (by TF-IDF similarity to the question) that fit, which varies per question
+  and is not cached.
+- **Model and cost:** `AI_LLM_MODEL` defaults to `claude-opus-5` ($5 / $25 per million input / output tokens) at
+  `AI_LLM_EFFORT=low`, which suits short FAQ answers. A question to a tenant with 6k tokens of FAQs costs about
+  $0.03 uncached, or well under a cent when the FAQs are cached, plus the answer (~100-300 output tokens).
+  `claude-sonnet-5` ($2 / $10) or `claude-haiku-4-5` ($1 / $5, set `AI_LLM_EFFORT=` empty, as Haiku does not
+  support effort) are cheaper options. Token usage is in the `ai_llm_tokens_total` metric. Each question is answered
+  on its own (no conversation history), which keeps prompts small.
+- **Privacy:** customer messages and the tenant's FAQs are sent to the Anthropic API.
 
 ## Prerequisites
 
@@ -183,6 +210,11 @@ public development values from the `dev` profile are rejected outside it. Genera
 | backend | `RATE_LIMIT_STORE` / `REDIS_URL` | `REDIS_URL` if `redis` | `memory` (`redis` + `redis://redis:6379` in the production stack) |
 | backend | `SERVER_FORWARD_HEADERS_STRATEGY` | behind a proxy | `native` in the production stack |
 | backend, ai-microservice | `MANAGEMENT_PORT` (health + metrics, private) | | `9090` / `9091` |
+| ai-microservice | `ANTHROPIC_API_KEY` | for Claude answers | (empty: keyword matching) |
+| ai-microservice | `AI_LLM_MODEL` / `AI_LLM_EFFORT` | | `claude-opus-5` / `low` |
+| ai-microservice | `AI_LLM_MAX_TOKENS` / `AI_LLM_MAX_CONTEXT_CHARS` | | `2048` / `24000` |
+| ai-microservice | `AI_LLM_TIMEOUT` / `AI_LLM_MAX_RETRIES` | | `20s` / `1` |
+| ai-microservice | `ANTHROPIC_BASE_URL` | | Anthropic API |
 | backend, ai-microservice | `LOG_FORMAT` | | `plain` (`json` in the production stack) |
 | frontend-admin | `VITE_API_BASE` / `VITE_WS_URL` / `VITE_WIDGET_URL` | | `http://localhost:8080` / `ws://…/ws` / `…/widget/chat-widget.js` |
 
@@ -231,7 +263,9 @@ separate hostnames because their paths overlap.
   | `chat_messages_total` | `outcome` = answered, rate_limited, empty, too_long, unknown_widget, origin_not_allowed | public chat messages |
   | `auth_logins_total` | `outcome` = success, failure, rate_limited | admin logins |
   | `ai_requests_seconds` | `operation` = reply, train; `outcome` = success, error | backend → AI service calls (latency histogram) |
-  | `ai_replies_total` | `result` = answered, no_match, no_data | how often the AI found a matching FAQ |
+  | `ai_replies_total` | `result` = answered, no_match, no_data; `source` = llm, keyword, none | how often the AI could answer, and whether Claude or the keyword fallback did |
+  | `ai_llm_requests_seconds` | `model`; `outcome` = answered, no_answer, refusal, truncated, empty, error | Claude API calls (latency histogram) |
+  | `ai_llm_tokens_total` | `model`; `type` = input, output, cache_read, cache_write | Claude token usage (drives cost) |
   | `ai_tenant_models` | | tenant models loaded in the AI service |
 
 - **Logs:** `LOG_FORMAT=json` (set in the production stack) writes one JSON object per line (`@timestamp`,
@@ -360,4 +394,5 @@ AI microservice (`:8081`, `/ai/**` requires `X-API-KEY`)
 - Two fixed roles; there are no finer-grained permissions (e.g. read-only access).
 - The `Origin` check stops other websites from embedding a tenant's chat in browsers, but a non-browser client
   can send any `Origin`; the per-IP rate limit is what bounds such traffic.
-- Answers are retrieval-only (best-matching FAQ), no generative model.
+- Claude answers each message on its own; follow-up questions that depend on earlier messages in the chat
+  ("and on weekends?") are not understood.

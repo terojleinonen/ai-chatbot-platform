@@ -1,11 +1,16 @@
 package com.demo.ai.service;
 
+import com.anthropic.errors.AnthropicException;
 import com.demo.ai.entity.TenantFaqEntity;
 import com.demo.ai.entity.TenantModelVersion;
+import com.demo.ai.llm.ClaudeResponder;
+import com.demo.ai.llm.LlmUnusableReplyException;
 import com.demo.ai.model.TenantModel;
 import com.demo.ai.repository.TenantFaqRepository;
 import com.demo.ai.repository.TenantModelVersionRepository;
 import io.micrometer.core.instrument.MeterRegistry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,19 +21,27 @@ import java.util.concurrent.ConcurrentHashMap;
  * Keeps one in-memory model per tenant. Every retrain bumps the tenant's version in the database, and each
  * reply checks it, so when several AI instances run, one that did not receive a retrain reloads the tenant's
  * FAQs instead of answering from stale data.
+ * <p>
+ * Questions are answered by Claude from the tenant's FAQs. Without an API key, or when the Claude call fails,
+ * the answer comes from keyword matching (the FAQ whose question is most similar) so the chat keeps working.
  */
 @Service
 public class MultiTenantAiService {
+    private static final Logger log = LoggerFactory.getLogger(MultiTenantAiService.class);
+
     /** A model together with the database version its FAQs were read at (0 = no version row yet). */
     private record Cached(TenantModel model, long version) {}
 
     private final TenantFaqRepository faqRepo;
     private final TenantModelVersionRepository versions;
+    private final ClaudeResponder llm;
     private final MeterRegistry metrics;
     private final Map<Long, Cached> models = new ConcurrentHashMap<>();
 
-    public MultiTenantAiService(TenantFaqRepository faqRepo, TenantModelVersionRepository versions, MeterRegistry metrics) {
+    public MultiTenantAiService(TenantFaqRepository faqRepo, TenantModelVersionRepository versions,
+                               ClaudeResponder llm, MeterRegistry metrics) {
         this.faqRepo = faqRepo;
+        this.llm = llm;
         this.versions = versions;
         this.metrics = metrics;
         metrics.gaugeMapSize("ai.tenant.models", List.of(), models);
@@ -63,19 +76,30 @@ public class MultiTenantAiService {
             List<TenantFaqEntity> faqs = faqRepo.findByTenantId(tenantId);
             if (faqs.isEmpty()) {
                 models.remove(tenantId);
-                return count("no_data", "This tenant has no training data yet.");
+                return count("no_data", "none", "This tenant has no training data yet.");
             }
             cached = new Cached(new TenantModel(faqs), current);
             models.put(tenantId, cached);
         }
+        if (llm.enabled()) {
+            try {
+                ClaudeResponder.Reply reply = llm.answer(cached.model(), message);
+                return count(reply.answered() ? "answered" : "no_match", "llm", reply.text());
+            } catch (AnthropicException | LlmUnusableReplyException e) {
+                log.warn("Claude reply failed for tenant {}, using keyword matching: {}", tenantId, e.toString());
+            }
+        }
         String answer = cached.model().getBestAnswer(message);
         String result = TenantModel.NO_MATCH.equals(answer) ? "no_match" : TenantModel.NO_DATA.equals(answer) ? "no_data" : "answered";
-        return count(result, answer);
+        return count(result, "keyword", answer);
     }
 
-    /** Counts replies by result (metric ai_replies_total{result=answered|no_match|no_data}). */
-    private String count(String result, String answer) {
-        metrics.counter("ai.replies", "result", result).increment();
+    /**
+     * Counts replies by result and by what produced them (metric ai_replies_total{result=answered|no_match|no_data,
+     * source=llm|keyword|none}); source=keyword while Claude is configured means Claude calls are failing.
+     */
+    private String count(String result, String source, String answer) {
+        metrics.counter("ai.replies", "result", result, "source", source).increment();
         return answer;
     }
 }

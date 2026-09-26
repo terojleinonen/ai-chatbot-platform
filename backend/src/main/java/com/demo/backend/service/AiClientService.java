@@ -8,10 +8,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -19,7 +21,14 @@ import java.util.Map;
 public class AiClientService {
     private static final Logger log = LoggerFactory.getLogger(AiClientService.class);
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    /**
+     * Generous enough for a Claude reply including one retry (the AI service's AI_LLM_TIMEOUT is 20s per attempt),
+     * short enough that a hung AI service can't tie up chat threads indefinitely.
+     */
+    static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
+    static final Duration READ_TIMEOUT = Duration.ofSeconds(60);
+
+    private final RestTemplate restTemplate = restTemplate();
     private final String aiBaseUrl;
     private final String apiKey;
     private final MeterRegistry metrics;
@@ -67,6 +76,13 @@ public class AiClientService {
             timer.stop(aiTimer("train", "error"));
             throw e;
         }
+    }
+
+    private static RestTemplate restTemplate() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(CONNECT_TIMEOUT);
+        factory.setReadTimeout(READ_TIMEOUT);
+        return new RestTemplate(factory);
     }
 
     /** Latency and outcome of calls to the AI service (metric ai_requests_seconds{operation, outcome}). */

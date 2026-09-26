@@ -1,6 +1,10 @@
 package com.demo.ai.service;
 
+import com.anthropic.errors.AnthropicIoException;
 import com.demo.ai.entity.TenantFaqEntity;
+import com.demo.ai.llm.ClaudeResponder;
+import com.demo.ai.llm.LlmUnusableReplyException;
+import com.demo.ai.model.TenantModel;
 import com.demo.ai.repository.TenantFaqRepository;
 import com.demo.ai.repository.TenantModelVersionRepository;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -10,12 +14,16 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 class MultiTenantAiServiceTest {
     private final TenantFaqRepository faqs = mock(TenantFaqRepository.class);
     private final TenantModelVersionRepository versions = mock(TenantModelVersionRepository.class);
-    private final MultiTenantAiService service = new MultiTenantAiService(faqs, versions, new SimpleMeterRegistry());
+    private final ClaudeResponder llm = mock(ClaudeResponder.class);   // disabled unless a test enables it
+    private final SimpleMeterRegistry metrics = new SimpleMeterRegistry();
+    private final MultiTenantAiService service = new MultiTenantAiService(faqs, versions, llm, metrics);
 
     private static List<TenantFaqEntity> faq(String q, String a) {
         return List.of(new TenantFaqEntity(1L, q, a));
@@ -51,5 +59,34 @@ class MultiTenantAiServiceTest {
         when(faqs.findByTenantId(2L)).thenReturn(List.of());
         when(versions.findVersion(2L)).thenReturn(Optional.empty());
         assertEquals("This tenant has no training data yet.", service.reply(2L, "hi"));
+    }
+
+    @Test
+    void answersWithClaudeWhenConfigured() {
+        when(versions.findVersion(1L)).thenReturn(Optional.of(1L));
+        when(faqs.findByTenantId(1L)).thenReturn(faq("What are your opening hours?", "9 to 5."));
+        when(llm.enabled()).thenReturn(true);
+        when(llm.answer(any(), eq("when can I visit?"))).thenReturn(new ClaudeResponder.Reply("We're open 9 to 5.", true));
+        when(llm.answer(any(), eq("who is your CEO?"))).thenReturn(new ClaudeResponder.Reply(TenantModel.NO_MATCH, false));
+
+        assertEquals("We're open 9 to 5.", service.reply(1L, "when can I visit?"));
+        assertEquals(TenantModel.NO_MATCH, service.reply(1L, "who is your CEO?"));
+        assertEquals(1, metrics.counter("ai.replies", "result", "answered", "source", "llm").count());
+        assertEquals(1, metrics.counter("ai.replies", "result", "no_match", "source", "llm").count());
+    }
+
+    @Test
+    void fallsBackToKeywordMatchingWhenClaudeFails() {
+        when(versions.findVersion(1L)).thenReturn(Optional.of(1L));
+        when(faqs.findByTenantId(1L)).thenReturn(faq("What are your opening hours?", "9 to 5."));
+        when(llm.enabled()).thenReturn(true);
+        when(llm.answer(any(), any())).thenThrow(new AnthropicIoException("connection refused"));
+        assertEquals("9 to 5.", service.reply(1L, "opening hours"));
+
+        reset(llm);
+        when(llm.enabled()).thenReturn(true);
+        when(llm.answer(any(), any())).thenThrow(new LlmUnusableReplyException("refused"));
+        assertEquals("9 to 5.", service.reply(1L, "opening hours"));
+        assertEquals(2, metrics.counter("ai.replies", "result", "answered", "source", "keyword").count());
     }
 }
