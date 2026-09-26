@@ -1,5 +1,7 @@
 export const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8080";
 export const WS_URL = import.meta.env.VITE_WS_URL || API_BASE.replace(/^http/, "ws") + "/ws";
+// Where customer websites load the widget from (the production stack serves it under /widget/ on the API host).
+export const WIDGET_URL = import.meta.env.VITE_WIDGET_URL || `${API_BASE}/widget/chat-widget.js`;
 
 const TOKEN_KEY = "admin_token";
 const EXPIRES_KEY = "admin_token_expires";
@@ -109,6 +111,15 @@ export const api = {
   },
   deleteFaq: async (id) => {
     await request(`/faq/${id}`, { method: "DELETE" });
+  },
+  // Websites allowed to use the tenant's chat widget (empty = any website).
+  updateTenantSettings: async (id, allowedOrigins) => {
+    const r = await ensureOk(await request(`/tenants/${id}/settings`, { method: "PUT", json: { allowedOrigins } }));
+    return r.json();
+  },
+  rotateWidgetKey: async (id) => {
+    const r = await ensureOk(await request(`/tenants/${id}/widget-key`, { method: "POST" }));
+    return r.json();
   },
   // Replaces all FAQs of the tenant with the given rows and retrains the AI.
   importFaqs: async (tenantId, faqs) => {

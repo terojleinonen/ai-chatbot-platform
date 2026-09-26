@@ -27,3 +27,9 @@ security:
     window: 15m
   cors:
     allowed-origins: http://localhost:5173
+
+chat:
+  max-message-length: 1000
+  rate-limit:
+    max-messages-per-ip: 20
+    window: 1m

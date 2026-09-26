@@ -20,11 +20,14 @@ public class TenantController {
         this.access = access;
     }
 
+    public record CreateTenantRequest(String name) {}
+    public record TenantSettingsRequest(List<String> allowedOrigins) {}
+
+    /** Only the name is taken from the request; id and widget key are always generated. */
     @PostMapping("/create")
-    public Tenant create(@RequestBody Tenant tenant) {
+    public Tenant create(@RequestBody CreateTenantRequest req) {
         access.requireSuperAdmin();
-        tenant.setId(null); // never let a client overwrite an existing tenant
-        return service.create(tenant);
+        return service.create(req.name());
     }
 
     /** Super admins see every tenant; tenant admins only their assigned ones. */
@@ -33,5 +36,19 @@ public class TenantController {
         AdminUser user = access.currentUser();
         if (user.isSuperAdmin()) return service.list();
         return user.getTenants().stream().sorted(Comparator.comparing(Tenant::getId)).toList();
+    }
+
+    /** Sets which websites may use the tenant's chat widget (empty list = any website). */
+    @PutMapping("/{id}/settings")
+    public Tenant updateSettings(@PathVariable Long id, @RequestBody TenantSettingsRequest req) {
+        access.requireTenantAccess(id);
+        return service.updateAllowedOrigins(id, req.allowedOrigins());
+    }
+
+    /** Issues a new widget key; widgets embedded with the old key stop working immediately. */
+    @PostMapping("/{id}/widget-key")
+    public Tenant rotateWidgetKey(@PathVariable Long id) {
+        access.requireTenantAccess(id);
+        return service.rotateWidgetKey(id);
     }
 }

@@ -10,11 +10,11 @@
 
     <script src="chat-widget.js"></script>
     <script>
-      // Optional ?tenantId=... (and ?backendUrl=...) to try other tenants without editing this file.
+      // Pass ?widgetKey=... (copy it from the Tenants page in the admin panel) and optionally ?backendUrl=...
       const params = new URLSearchParams(location.search);
       ChatWidget.init({
         backendUrl: params.get("backendUrl") || "http://localhost:8080",
-        tenantId: Number(params.get("tenantId") || 1),
+        widgetKey: params.get("widgetKey"),
         title: "Support"
       });
     </script>
