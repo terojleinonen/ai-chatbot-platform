@@ -57,6 +57,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/auth/login").permitAll()
                         .requestMatchers("/ws/**", "/ws-chat/**", "/error").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(o -> o.jwt(Customizer.withDefaults()))
                 .build();
@@ -99,19 +100,17 @@ public class SecurityConfig {
     }
 
     @Bean
-    SecretKey jwtSigningKey(@Value("${security.jwt.secret:}") String secret) {
-        if (secret.isBlank()) {
-            log.warn("JWT_SECRET is not set: using a random key, so tokens are invalidated on every restart. "
-                    + "Set JWT_SECRET (at least 32 characters) in any shared or production environment.");
+    SecretKey jwtSigningKey(@Value("${security.jwt.secret:}") String secret,
+                            @Value("${security.dev-mode:false}") boolean devMode) {
+        if (secret.isBlank() && devMode) {
+            log.warn("JWT_SECRET is not set: using a random key (dev profile only), so tokens are invalidated "
+                    + "on every restart.");
             byte[] random = new byte[32];
             new SecureRandom().nextBytes(random);
             return new SecretKeySpec(random, "HmacSHA256");
         }
-        byte[] bytes = secret.getBytes(StandardCharsets.UTF_8);
-        if (bytes.length < 32) {
-            throw new IllegalStateException("JWT_SECRET must be at least 32 bytes for HS256");
-        }
-        return new SecretKeySpec(bytes, "HmacSHA256");
+        SecretChecks.requireStrong("JWT_SECRET", secret, devMode);
+        return new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
     }
 
     @Bean

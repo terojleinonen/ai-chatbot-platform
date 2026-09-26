@@ -121,3 +121,30 @@ jobs:
             e2e/playwright-report/
             e2e/test-results/
           retention-days: 7
+
+  production-stack:
+    name: production stack (Docker + HTTPS smoke test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      # *.localhost hosts make Caddy use its internal CA instead of Let's Encrypt.
+      - name: Write a throwaway production env file
+        run: |
+          cat > .env.production <<EOF
+          ADMIN_HOST=admin.localhost
+          API_HOST=api.localhost
+          DB_USER=chatbot
+          DB_PASSWORD=$(openssl rand -hex 32)
+          AI_API_KEY=$(openssl rand -hex 32)
+          JWT_SECRET=$(openssl rand -hex 32)
+          ADMIN_USERNAME=admin
+          ADMIN_PASSWORD=$(openssl rand -hex 16)
+          EOF
+      - name: Build and start the production stack
+        run: docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build --wait
+      - name: Smoke test over HTTPS
+        run: deploy/smoke-test.sh .env.production
+      - name: Service logs
+        if: failure()
+        run: docker compose -f docker-compose.prod.yml --env-file .env.production logs --no-color --tail 200

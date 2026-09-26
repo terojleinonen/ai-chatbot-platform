@@ -81,7 +81,7 @@
     // stompjs 2.x API: send(destination, headers, body)
     stompClient.send("/app/chat.send", {}, JSON.stringify({
       sessionId: sessionId,
-      tenantId: Number(config.tenantId),
+      widgetKey: config.widgetKey,
       content: message
     }));
 
@@ -91,14 +91,14 @@
   window.ChatWidget = {
     /**
      * cfg.backendUrl  - base URL of the backend, e.g. "http://localhost:8080" (required)
-     * cfg.tenantId    - tenant ID from the admin panel (required)
+     * cfg.widgetKey   - the tenant's widget key from the admin panel's Tenants page (required)
      * cfg.title       - header text (optional)
      * cfg.cssUrl      - custom stylesheet URL (optional)
      */
     init: function (cfg) {
       config = cfg || {};
-      if (!config.backendUrl || !config.tenantId) {
-        console.error("ChatWidget.init requires backendUrl and tenantId");
+      if (!config.backendUrl || !config.widgetKey) {
+        console.error("ChatWidget.init requires backendUrl and widgetKey");
         return;
       }
       createUI();

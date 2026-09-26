@@ -1,0 +1,43 @@
+# Automatic HTTPS: Caddy obtains and renews Let's Encrypt certificates for both hosts (ports 80 and 443
+# must be reachable from the internet) and redirects HTTP to HTTPS. *.localhost hosts get certificates from
+# Caddy's internal CA instead, which is what the smoke test uses.
+{
+	# Optional: an email address for certificate expiry notices.
+	# email ops@example.com
+}
+
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}
+
+# Admin panel (single-page app).
+{$ADMIN_HOST} {
+	import security_headers
+	header X-Frame-Options "DENY"
+	encode zstd gzip
+	root * /srv/admin
+	try_files {path} /index.html
+	file_server
+}
+
+# Backend API and chat WebSockets, plus the embeddable widget under /widget/.
+{$API_HOST} {
+	import security_headers
+	encode zstd gzip
+
+	handle_path /widget/* {
+		root * /srv/widget
+		file_server
+	}
+
+	handle {
+		# Sets X-Forwarded-For/-Proto; the backend trusts them (SERVER_FORWARD_HEADERS_STRATEGY=native)
+		# so rate limits see the real client IP. WebSocket upgrades are proxied automatically.
+		reverse_proxy backend:8080
+	}
+}

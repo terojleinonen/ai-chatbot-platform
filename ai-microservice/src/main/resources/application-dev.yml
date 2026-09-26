@@ -1,0 +1,10 @@
+# Local development defaults (SPRING_PROFILES_ACTIVE=dev). Never use this profile in production.
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/ai_microservice}
+    username: ${DB_USER:user}
+    password: ${DB_PASSWORD:pass}
+
+security:
+  dev-mode: true
+  api-key: ${AI_API_KEY:dev-only-insecure-ai-key-do-not-use-in-production}

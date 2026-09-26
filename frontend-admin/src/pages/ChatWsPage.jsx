@@ -29,10 +29,11 @@ export default function ChatWsPage() {
   }, []);
 
   const send = () => {
-    if (!input || !tenantId || !clientRef.current?.connected) return;
+    const tenant = tenants.find(t => String(t.id) === tenantId);
+    if (!input || !tenant || !clientRef.current?.connected) return;
     const payload = {
       sessionId: sessionIdRef.current,
-      tenantId: Number(tenantId),
+      widgetKey: tenant.widgetKey,
       content: input
     };
     clientRef.current.publish({
