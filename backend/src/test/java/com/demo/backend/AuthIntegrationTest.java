@@ -61,7 +61,7 @@ class AuthIntegrationTest {
                 .andExpect(status().isOk());
         mvc.perform(get("/tenants/list").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[*].name", hasItem("Acme")));
+                .andExpect(jsonPath("$.items[*].name", hasItem("Acme")));
         mvc.perform(get("/auth/me").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.username").value("admin"));

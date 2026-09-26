@@ -5,12 +5,15 @@ import { api } from "../services/api";
 export default function ImportExportPage() {
   const [tenants, setTenants] = useState([]);
   const [tenantId, setTenantId] = useState("");
-  const [faqs, setFaqs] = useState([]);
+  const [count, setCount] = useState(0);
 
-  useEffect(() => { api.listTenants().then(setTenants); }, []);
-  useEffect(() => { if (tenantId) api.getFaqs(tenantId).then(setFaqs); }, [tenantId]);
+  useEffect(() => { api.tenantOptions().then(setTenants); }, []);
+  useEffect(() => {
+    if (tenantId) api.getFaqs(tenantId, { size: 1 }).then(p => setCount(p.total));
+  }, [tenantId]);
 
-  const exportCsv = () => {
+  const exportCsv = async () => {
+    const faqs = await api.exportFaqs(tenantId);
     const data = faqs.map(f => ({ question: f.question, answer: f.answer }));
     const csv = Papa.unparse(data);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -36,7 +39,7 @@ export default function ImportExportPage() {
         if (!window.confirm(`Replace all FAQs of this tenant with ${rows.length} imported rows?`)) return;
         try {
           const saved = await api.importFaqs(Number(tenantId), rows);
-          setFaqs(saved);
+          setCount(saved.length);
           alert(`Imported & trained ${saved.length} FAQs.`);
         } catch (err) {
           alert(err.message);
@@ -82,7 +85,7 @@ export default function ImportExportPage() {
           </div>
           <p className="text-sm text-gray-600">
             CSV format: <code>question,answer</code> headers. Importing replaces
-            the tenant's existing FAQs. Currently {faqs.length} FAQs.
+            the tenant's existing FAQs. Currently {count} FAQs.
           </p>
         </>
       )}

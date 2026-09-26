@@ -234,23 +234,28 @@ Backend (`:8080`)
 
 `/tenants/**`, `/faq/**` and `/users/**` require `Authorization: Bearer <token>`. Errors return `{"message": ...}`.
 **SA** = super admins only; tenant and FAQ endpoints require access to the tenant involved.
+**Paged** lists take `?page=` (zero-based), `?size=` (default 50, max 200) and `?q=` (search), are sorted newest
+first, and return `{items, page, size, total, totalPages}`. Input limits: FAQ question 1000 and answer 3000
+characters, imports up to 5000 rows, tenant names 255 characters (400 with a message otherwise).
 
 | Method | Path | Description |
 |---|---|---|
 | POST | `/auth/login` | `{username, password}` → `{token, expiresAt, username}` (public; 401 bad credentials, 429 rate limited) |
 | GET | `/auth/me` | current user `{id, username, createdAt, role, tenantIds}` |
-| GET | `/users` | **SA** admin users `[{id, username, createdAt, role, tenantIds}]` |
+| GET | `/users` | **SA** **paged** admin users `{id, username, createdAt, role, tenantIds}`, `q` matches username |
 | POST | `/users` | **SA** `{username, password, role, tenantIds}` → create user |
 | PUT | `/users/{id}/access` | **SA** `{role, tenantIds}` — change another user's access (applies immediately) |
 | PUT | `/users/{id}/password` | **SA** `{password}` — reset another user's password (signs them out) |
 | PUT | `/users/me/password` | `{currentPassword, newPassword}` → fresh `{token, expiresAt, username}` |
 | DELETE | `/users/{id}` | **SA** delete another user (signs them out) |
 | POST | `/tenants/create` | **SA** `{name}` → tenant (with generated `widgetKey`) |
-| GET | `/tenants/list` | tenants the user can access (all for super admins), incl. `widgetKey`, `allowedOrigins` |
+| GET | `/tenants/list` | **paged** tenants the user can access (all for super admins), incl. `widgetKey`, `allowedOrigins`; `q` matches name |
+| GET | `/tenants/options` | every accessible tenant as `[{id, name, widgetKey}]`, sorted by name (for pickers) |
 | PUT | `/tenants/{id}/settings` | `{allowedOrigins: ["https://…"]}` — websites allowed to use the chat (empty = any) |
 | POST | `/tenants/{id}/widget-key` | rotate the widget key (old key stops working) |
 | POST | `/faq/create` | `{tenantId, question, answer}` |
-| GET | `/faq/list/{tenantId}` | tenant's FAQs |
+| GET | `/faq/list/{tenantId}` | **paged** tenant's FAQs; `q` matches question or answer |
+| GET | `/faq/export/{tenantId}` | all of the tenant's FAQs (CSV export) |
 | PUT | `/faq/{id}` | `{question, answer}` |
 | DELETE | `/faq/{id}` | delete FAQ |
 | POST | `/faq/import/{tenantId}` | `[{question, answer}]` — replaces all FAQs of the tenant |

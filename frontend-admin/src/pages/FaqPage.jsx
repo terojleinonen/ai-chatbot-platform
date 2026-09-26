@@ -1,10 +1,15 @@
 import { useEffect, useState } from "react";
 import { api } from "../services/api";
+import Pager from "../components/Pager.jsx";
+import SearchBox from "../components/SearchBox.jsx";
 
 export default function FaqPage() {
   const [tenants, setTenants] = useState([]);
   const [tenantId, setTenantId] = useState("");
-  const [faqs, setFaqs] = useState([]);
+  const [faqs, setFaqs] = useState(null);   // PageResponse
+  const [page, setPage] = useState(0);
+  const [search, setSearch] = useState("");
+  const [error, setError] = useState("");
   const [q, setQ] = useState("");
   const [a, setA] = useState("");
   const [editing, setEditing] = useState(null);
@@ -12,20 +17,36 @@ export default function FaqPage() {
   const [editA, setEditA] = useState("");
   const [status, setStatus] = useState("");
 
-  useEffect(() => { api.listTenants().then(setTenants); }, []);
+  useEffect(() => { api.tenantOptions().then(setTenants); }, []);
 
-  const loadFaqs = () => {
-    if (tenantId) api.getFaqs(tenantId).then(setFaqs);
+  const loadFaqs = (p = page) => {
+    if (tenantId) api.getFaqs(tenantId, { page: p, q: search }).then(setFaqs).catch(e => setError(e.message));
   };
 
-  useEffect(() => { loadFaqs(); }, [tenantId]);
+  // A new tenant or search starts again from the first page.
+  useEffect(() => { setPage(0); loadFaqs(0); }, [tenantId, search]);
+
+  const goTo = (p) => { setPage(p); loadFaqs(p); };
+
+  // Runs an action and shows the backend's error message if it fails.
+  const run = async (action) => {
+    setError("");
+    try {
+      await action();
+      return true;
+    } catch (err) {
+      setError(err.message);
+      return false;
+    }
+  };
 
   const addFaq = async (e) => {
     e.preventDefault();
     if (!tenantId) return;
-    await api.addFaq(Number(tenantId), q, a);
-    setQ(""); setA("");
-    loadFaqs();
+    if (await run(() => api.addFaq(Number(tenantId), q, a))) {
+      setQ(""); setA("");
+      goTo(0);   // newest first
+    }
   };
 
   const startEdit = (faq) => {
@@ -35,9 +56,10 @@ export default function FaqPage() {
   };
 
   const saveEdit = async () => {
-    await api.updateFaq(editing.id, { question: editQ, answer: editA });
-    setEditing(null);
-    loadFaqs();
+    if (await run(() => api.updateFaq(editing.id, { question: editQ, answer: editA }))) {
+      setEditing(null);
+      loadFaqs();
+    }
   };
 
   const retrain = async () => {
@@ -52,7 +74,8 @@ export default function FaqPage() {
   const deleteFaq = async (id) => {
     if (!window.confirm("Delete this FAQ?")) return;
     await api.deleteFaq(id);
-    loadFaqs();
+    // Step back if the last item on this page was removed.
+    goTo(faqs.items.length === 1 && page > 0 ? page - 1 : page);
   };
 
   return (
@@ -77,6 +100,7 @@ export default function FaqPage() {
         )}
         {status && <span className="text-sm text-gray-600">{status}</span>}
       </div>
+      {error && <div className="mb-4 p-3 rounded bg-red-100 text-red-800" role="alert">{error}</div>}
       {tenantId && (
         <>
           <form onSubmit={addFaq} className="bg-white p-4 rounded shadow mb-4">
@@ -98,8 +122,12 @@ export default function FaqPage() {
             </button>
           </form>
           <h2 className="font-semibold mb-2">Existing FAQs</h2>
+          <div className="mb-3"><SearchBox placeholder="Search questions and answers" onSearch={setSearch} /></div>
+          {faqs && faqs.total === 0 && (
+            <p className="text-gray-600 text-sm">{search ? "No FAQs match your search." : "No FAQs yet."}</p>
+          )}
           <div className="space-y-2">
-            {faqs.map(f => (
+            {(faqs?.items ?? []).map(f => (
               <div key={f.id} className="bg-white p-3 rounded shadow">
                 <div className="flex justify-between items-start">
                   <div>
@@ -118,6 +146,7 @@ export default function FaqPage() {
               </div>
             ))}
           </div>
+          <Pager data={faqs} onPage={goTo} label="FAQs" />
           {editing && (
             <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
               <div className="bg-white p-4 rounded shadow w-full max-w-md">

@@ -78,7 +78,7 @@ class TenantSettingsIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message", containsString("use the form https://")));
         call(get("/tenants/list"), superToken, null)
-                .andExpect(jsonPath("$[?(@.id == " + id + ")].allowedOrigins[0]", contains("https://shop.example.com")));
+                .andExpect(jsonPath("$.items[?(@.id == " + id + ")].allowedOrigins[0]", contains("https://shop.example.com")));
     }
 
     @Test

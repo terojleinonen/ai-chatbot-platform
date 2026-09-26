@@ -4,6 +4,7 @@ import com.demo.backend.entity.AdminUser;
 import com.demo.backend.entity.Tenant;
 import com.demo.backend.security.AccessControl;
 import com.demo.backend.service.TenantService;
+import com.demo.backend.web.PageResponse;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Comparator;
@@ -30,12 +31,28 @@ public class TenantController {
         return service.create(req.name());
     }
 
-    /** Super admins see every tenant; tenant admins only their assigned ones. */
+    public record TenantOption(Long id, String name, String widgetKey) {}
+
+    /** One page of tenants (newest first). Super admins see every tenant; tenant admins only their assigned ones. */
     @GetMapping("/list")
-    public List<Tenant> list() {
+    public PageResponse<Tenant> list(@RequestParam(required = false) Integer page,
+                                     @RequestParam(required = false) Integer size,
+                                     @RequestParam(required = false) String q) {
         AdminUser user = access.currentUser();
-        if (user.isSuperAdmin()) return service.list();
-        return user.getTenants().stream().sorted(Comparator.comparing(Tenant::getId)).toList();
+        List<Long> ids = user.getTenants().stream().map(Tenant::getId).toList();
+        return PageResponse.of(service.search(user.isSuperAdmin(), ids, PageResponse.query(q),
+                PageResponse.request(page, size)), t -> t);
+    }
+
+    /** Every tenant the user can access, as {id, name, widgetKey}, sorted by name (for tenant pickers). */
+    @GetMapping("/options")
+    public List<TenantOption> options() {
+        AdminUser user = access.currentUser();
+        List<Tenant> tenants = user.isSuperAdmin() ? service.list() : List.copyOf(user.getTenants());
+        return tenants.stream()
+                .sorted(Comparator.comparing(Tenant::getName, String.CASE_INSENSITIVE_ORDER).thenComparing(Tenant::getId))
+                .map(t -> new TenantOption(t.getId(), t.getName(), t.getWidgetKey()))
+                .toList();
     }
 
     /** Sets which websites may use the tenant's chat widget (empty list = any website). */
