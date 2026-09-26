@@ -364,7 +364,8 @@ tenant's **Allowed websites** to stop other sites from using the tenant's chat.
 
 While a reply is being prepared the widget shows a typing indicator (three animated dots, announced to screen
 readers, static when the visitor prefers reduced motion); it gives way to the reply as soon as the first words
-stream in. With a custom stylesheet, style `.cw-typing` and `.cw-typing .cw-dot`.
+stream in. With a custom stylesheet, style `.cw-typing` and `.cw-typing .cw-dot`. The admin panel's test chat
+shows the same indicator.
 
 ## API reference
 
