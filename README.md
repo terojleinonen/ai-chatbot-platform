@@ -362,6 +362,10 @@ The **Tenants** page shows the exact embed code for each tenant (with **Copy emb
 `chat-widget.css` is loaded from the same folder as the script (override with `cssUrl`). Add the website to the
 tenant's **Allowed websites** to stop other sites from using the tenant's chat.
 
+While a reply is being prepared the widget shows a typing indicator (three animated dots, announced to screen
+readers, static when the visitor prefers reduced motion); it gives way to the reply as soon as the first words
+stream in. With a custom stylesheet, style `.cw-typing` and `.cw-typing .cw-dot`.
+
 ## API reference
 
 Backend (`:8080`)

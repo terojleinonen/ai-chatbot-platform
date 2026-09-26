@@ -66,6 +66,50 @@
   margin-right: auto;
 }
 
+/* Shown while the assistant is preparing a reply, until its first words arrive. */
+.cw-typing {
+  background: #e5e7eb;
+  margin-right: auto;
+  width: fit-content;
+  display: flex;
+  gap: 4px;
+  padding: 12px;
+}
+
+.cw-typing[hidden] {
+  display: none;
+}
+
+.cw-typing .cw-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #6b7280;
+  animation: cw-typing-bounce 1.2s infinite ease-in-out;
+}
+
+.cw-typing .cw-dot:nth-child(2) { animation-delay: 0.15s; }
+.cw-typing .cw-dot:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes cw-typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cw-typing .cw-dot { animation: none; opacity: 0.6; }
+}
+
+/* Read by screen readers only. */
+.cw-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 /* A reply that is still being written. */
 .cw-bot.cw-streaming::after {
   content: "▍";

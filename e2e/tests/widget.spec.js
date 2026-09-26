@@ -51,6 +51,32 @@ test("embedded widget answers from the tenant's FAQs over SockJS", async ({ page
   expect(errors).toEqual([]);
 });
 
+test("a typing indicator shows until the reply starts, below the conversation", async ({ page, request }) => {
+  const token = await adminToken(request);
+  const tenant = await createTenant(request, token);
+  await createFaq(request, token, tenant.id, "Do you ship abroad?", "Yes, worldwide.");
+  await openWidget(page, tenant.widgetKey);
+  const typing = page.locator("#cw-typing");
+  await expect(typing).toBeHidden();
+
+  // Replies can arrive within milliseconds, so record every time the indicator is shown or hidden.
+  await page.evaluate(() => {
+    const el = document.getElementById("cw-typing");
+    window.typingChanges = [];
+    new MutationObserver(() => window.typingChanges.push(el.hidden ? "hidden" : "shown"))
+      .observe(el, { attributes: true, attributeFilter: ["hidden"] });
+  });
+  expect(await ask(page, "do you ship abroad?")).toBe("Yes, worldwide.");
+  await expect(typing).toBeHidden();
+  const changes = await page.evaluate(() => window.typingChanges);
+  expect(changes).toContain("shown");
+  expect(changes.at(-1)).toBe("hidden");
+  await expect(typing).toHaveAttribute("role", "status");
+  await expect(typing).toContainText("The assistant is typing");
+  // It stays the last element, below the messages.
+  expect(await page.evaluate(() => document.getElementById("cw-messages").lastElementChild.id)).toBe("cw-typing");
+});
+
 test("an unknown widget key gets no answer from the AI", async ({ page }) => {
   await openWidget(page, "not-a-real-widget-key");
   expect(await ask(page, "hello?")).toBe("This chat is not configured correctly.");
