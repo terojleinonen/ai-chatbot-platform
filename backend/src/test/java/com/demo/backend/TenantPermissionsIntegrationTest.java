@@ -137,6 +137,22 @@ class TenantPermissionsIntegrationTest {
     }
 
     @Test
+    void oversizedInputGetsAClear400() throws Exception {
+        call(post("/faq/create"), superToken, Map.of("tenantId", tenantA, "question", "q".repeat(1001), "answer", "a"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Question is too long (at most 1000 characters)"));
+        long id = read(call(post("/faq/create"), superToken, Map.of("tenantId", tenantA, "question", "Q", "answer", "A"))).get("id").asLong();
+        call(put("/faq/" + id), superToken, Map.of("question", "Q", "answer", "a".repeat(3001)))
+                .andExpect(status().isBadRequest());
+        call(post("/faq/import/" + tenantA), superToken, List.of(Map.of("question", "ok", "answer", "ok"), Map.of("question", "", "answer", "x")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Row 2: Question and answer are required"));
+        call(get("/faq/list/" + tenantA), superToken, null)
+                .andExpect(jsonPath("$[*].question", hasItem("Q")));   // failed import changed nothing
+        call(post("/tenants/create"), superToken, Map.of("name", "n".repeat(256))).andExpect(status().isBadRequest());
+    }
+
+    @Test
     void accessChangesTakeEffectImmediately() throws Exception {
         call(put("/users/" + userId + "/access"), superToken, Map.of("role", "TENANT_ADMIN", "tenantIds", List.of(tenantB)))
                 .andExpect(status().isOk())

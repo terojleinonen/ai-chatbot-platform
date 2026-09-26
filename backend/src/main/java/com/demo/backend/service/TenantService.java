@@ -28,6 +28,9 @@ public class TenantService {
         if (name == null || name.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tenant name is required");
         }
+        if (name.trim().length() > 255) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tenant name is too long (at most 255 characters)");
+        }
         return repo.save(new Tenant(name.trim()));
     }
 
