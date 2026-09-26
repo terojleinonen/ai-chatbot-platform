@@ -1,0 +1,10 @@
+# Keep build contexts small and never ship local builds, dependencies or secrets into images.
+**/node_modules
+**/dist
+**/target
+**/.env
+**/.env.*
+!**/.env.example
+e2e/test-results
+e2e/playwright-report
+.git

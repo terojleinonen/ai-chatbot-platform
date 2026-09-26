@@ -24,6 +24,16 @@ ai:
   # Must match security.api-key in the ai-microservice. At least 32 characters.
   api-key: ${AI_API_KEY}
 
+# Only the health endpoint is exposed (for load balancers and uptime checks), without details.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
 chat:
   # Public chat (widget) protection, applied before the AI service is called.
   max-message-length: ${CHAT_MAX_MESSAGE_LENGTH:1000}
