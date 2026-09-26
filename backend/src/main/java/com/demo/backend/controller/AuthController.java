@@ -4,6 +4,7 @@ import com.demo.backend.entity.AdminUser;
 import com.demo.backend.security.LoginRateLimiter;
 import com.demo.backend.security.TokenService;
 import com.demo.backend.service.UserService;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -26,9 +27,11 @@ public class AuthController {
     private final TokenService tokens;
     private final LoginRateLimiter rateLimiter;
     private final UserService users;
+    private final MeterRegistry metrics;
 
     public AuthController(AuthenticationManager authManager, TokenService tokens, LoginRateLimiter rateLimiter,
-                          UserService users) {
+                          UserService users, MeterRegistry metrics) {
+        this.metrics = metrics;
         this.authManager = authManager;
         this.tokens = tokens;
         this.rateLimiter = rateLimiter;
@@ -44,6 +47,7 @@ public class AuthController {
         Optional<Duration> wait = rateLimiter.tryAcquire(ip, req.username());
         if (wait.isPresent()) {
             // Checked before authenticating, so no passwords are tested while blocked.
+            metrics.counter("auth.logins", "outcome", "rate_limited").increment();
             long seconds = Math.max(1, (wait.get().toMillis() + 999) / 1000);
             return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                     .header(HttpHeaders.RETRY_AFTER, String.valueOf(seconds))
@@ -54,12 +58,14 @@ public class AuthController {
             var auth = authManager.authenticate(
                     new UsernamePasswordAuthenticationToken(req.username(), req.password()));
             rateLimiter.recordSuccess(ip, req.username());
+            metrics.counter("auth.logins", "outcome", "success").increment();
             AdminUser user = users.findByUsername(auth.getName());
             TokenService.IssuedToken issued = tokens.issue(user);
             return ResponseEntity.ok(Map.of("token", issued.token(), "expiresAt", issued.expiresAt().toString(),
                     "username", issued.username(), "role", user.getRole()));
         } catch (AuthenticationException e) {
             // The attempt reserved by tryAcquire stays counted as a failure.
+            metrics.counter("auth.logins", "outcome", "failure").increment();
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(Map.of("message", "Invalid username or password"));
         }

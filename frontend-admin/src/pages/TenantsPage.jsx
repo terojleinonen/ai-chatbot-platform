@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, API_BASE, WIDGET_URL } from "../services/api";
 import { useAuth } from "../auth/AuthContext.jsx";
+import Pager from "../components/Pager.jsx";
+import SearchBox from "../components/SearchBox.jsx";
 
 const embedSnippet = (tenant) => `<script src="${WIDGET_URL}"></script>
 <script>
@@ -80,14 +82,18 @@ function TenantCard({ tenant, onChange }) {
 }
 
 export default function TenantsPage() {
-  const [tenants, setTenants] = useState([]);
+  const [data, setData] = useState(null);   // PageResponse
+  const [page, setPage] = useState(0);
+  const [search, setSearch] = useState("");
   const [name, setName] = useState("");
   const [error, setError] = useState("");
   const { isSuperAdmin } = useAuth();
+  const tenants = data?.items ?? [];
 
-  const load = () => api.listTenants().then(setTenants);
+  const load = (p = page) => api.listTenants({ page: p, q: search }).then(setData).catch(e => setError(e.message));
+  const goTo = (p) => { setPage(p); load(p); };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { goTo(0); }, [search]);
 
   const create = async (e) => {
     e.preventDefault();
@@ -96,21 +102,22 @@ export default function TenantsPage() {
     try {
       await api.createTenant(name);
       setName("");
-      load();
+      goTo(0);   // newest first
     } catch (err) {
       setError(err.message);
     }
   };
 
-  const replace = (updated) => setTenants(prev => prev.map(t => (t.id === updated.id ? updated : t)));
+  const replace = (updated) =>
+    setData(prev => ({ ...prev, items: prev.items.map(t => (t.id === updated.id ? updated : t)) }));
 
   return (
     <div className="max-w-3xl">
       <h1 className="text-2xl font-bold mb-4">Tenants</h1>
       {error && <div className="mb-4 p-3 rounded bg-red-100 text-red-800" role="alert">{error}</div>}
-      {!isSuperAdmin && (
+      {!isSuperAdmin && data && !search && (
         <p className="text-gray-700 mb-4">
-          {tenants.length
+          {data.total
             ? "These are the tenants assigned to you. Ask a super admin to create new tenants."
             : "No tenants are assigned to you yet. Ask a super admin for access."}
         </p>
@@ -126,9 +133,12 @@ export default function TenantsPage() {
           Add
         </button>
       </form>}
+      <div className="mb-3"><SearchBox placeholder="Search tenants" onSearch={setSearch} /></div>
+      {data && data.total === 0 && search && <p className="text-gray-600 text-sm">No tenants match your search.</p>}
       <div className="space-y-3">
         {tenants.map(t => <TenantCard key={t.id} tenant={t} onChange={replace} />)}
       </div>
+      <Pager data={data} onPage={goTo} label="tenants" />
     </div>
   );
 }

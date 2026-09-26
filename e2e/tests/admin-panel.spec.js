@@ -52,8 +52,8 @@ test("super admin creates a tenant and FAQ, and the chat answers from it", async
 
   await sidebar(page).getByRole("link", { name: "FAQs" }).click();
   await page.locator("select").selectOption({ label: tenant });
-  await page.getByPlaceholder("Question").fill("Where is your office located?");
-  await page.getByPlaceholder("Answer").fill("Helsinki, Finland.");
+  await page.getByPlaceholder("Question", { exact: true }).fill("Where is your office located?");
+  await page.getByPlaceholder("Answer", { exact: true }).fill("Helsinki, Finland.");
   await page.locator("form").getByRole("button", { name: "Add" }).click();
   await expect(page.getByText("Where is your office located?")).toBeVisible();
   await page.getByRole("button", { name: "Retrain AI" }).click();

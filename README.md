@@ -132,8 +132,8 @@ The backend uses Spring Security with stateless JWT bearer tokens:
 - Failed logins are rate limited: 5 per client IP + username and 20 per client IP (any username) within a
   sliding 15-minute window. Further attempts get `429 Too Many Requests` with a `Retry-After` header, and the
   password is not checked while blocked. A successful login clears that user's counter for the IP. Usernames
-  are not locked for every IP, so an attacker cannot lock the real admin out from elsewhere. Counters live in
-  memory (per backend instance, reset on restart). Behind a reverse proxy, set
+  are not locked for every IP, so an attacker cannot lock the real admin out from elsewhere. Counters are shared by all backend instances when
+  `RATE_LIMIT_STORE=redis` (as in the production stack), otherwise kept in memory per instance. Behind a reverse proxy, set
   `server.forward-headers-strategy=native` (or `framework`) so the limiter sees the real client IP instead of
   the proxy's.
 - Set `JWT_SECRET` (32+ characters) anywhere beyond local development. Without it the backend signs with a
@@ -153,7 +153,7 @@ before the AI service is called:
   chat; the browser's `Origin` from the WebSocket handshake is checked against it. An empty list allows any
   website. The admin panel's own origin can always use the test chat.
 - **Rate limit:** at most `CHAT_MAX_MESSAGES_PER_IP` messages (default 20) per client IP per
-  `CHAT_RATE_LIMIT_WINDOW` (default 1 minute), in memory per backend instance.
+  `CHAT_RATE_LIMIT_WINDOW` (default 1 minute), shared by all backend instances when `RATE_LIMIT_STORE=redis`.
 - **Size limit:** messages longer than `CHAT_MAX_MESSAGE_LENGTH` (default 1000) characters are refused.
 
 Visitors get a short explanation instead of an answer when a check fails.
@@ -180,7 +180,10 @@ public development values from the `dev` profile are rejected outside it. Genera
 | backend | `LOGIN_RATE_LIMIT_WINDOW` | | `15m` |
 | backend | `CHAT_MAX_MESSAGES_PER_IP` / `CHAT_RATE_LIMIT_WINDOW` | | `20` / `1m` |
 | backend | `CHAT_MAX_MESSAGE_LENGTH` | | `1000` |
+| backend | `RATE_LIMIT_STORE` / `REDIS_URL` | `REDIS_URL` if `redis` | `memory` (`redis` + `redis://redis:6379` in the production stack) |
 | backend | `SERVER_FORWARD_HEADERS_STRATEGY` | behind a proxy | `native` in the production stack |
+| backend, ai-microservice | `MANAGEMENT_PORT` (health + metrics, private) | | `9090` / `9091` |
+| backend, ai-microservice | `LOG_FORMAT` | | `plain` (`json` in the production stack) |
 | frontend-admin | `VITE_API_BASE` / `VITE_WS_URL` / `VITE_WIDGET_URL` | | `http://localhost:8080` / `ws://…/ws` / `…/widget/chat-widget.js` |
 
 See `frontend-admin/.env.example`.
@@ -194,11 +197,14 @@ terminates HTTPS with automatically issued and renewed Let's Encrypt certificate
  internet ──443/80──▶ web (Caddy) ──▶ admin panel (static)     https://ADMIN_HOST
                          │        ──▶ widget files (static)    https://API_HOST/widget/chat-widget.js
                          └──────────▶ backend :8080            https://API_HOST  (REST, wss://, SockJS)
-                private network:      backend ──▶ ai :8081 ──▶ postgres (both databases)
+                private network:      backend ──▶ ai :8081 ──▶ postgres (both databases) ◀── backup (→ ./backups)
+                                      backend ──▶ redis (shared rate-limit counters)
 ```
 
 Only Caddy publishes ports; Postgres, the backend and the AI service are reachable only on the private Docker
-network. Caddy redirects HTTP to HTTPS and sends HSTS and other security headers. The admin panel and the API use
+network. Caddy redirects HTTP to HTTPS and sends HSTS and other security headers, including a strict
+Content-Security-Policy for the admin panel (only its own scripts and styles; API calls only to `API_HOST`), which
+limits what an injected script could do with the login token the admin panel keeps in `localStorage`. The admin panel and the API use
 separate hostnames because their paths overlap.
 
 1. Point DNS for both hostnames (e.g. `admin.example.com`, `api.example.com`) at the server and open ports 80 and
@@ -209,9 +215,57 @@ separate hostnames because their paths overlap.
 4. Check: `deploy/smoke-test.sh .env.production` (health, HTTPS redirect, HSTS, admin panel, widget, login,
    CORS, AI connectivity and that no internal ports are exposed), then log in at `https://ADMIN_HOST`.
 
+### Monitoring
+
+- **Health:** `https://API_HOST/actuator/health` (public, no details, includes the database) for load balancers
+  and uptime monitors.
+- **Metrics:** both services expose Prometheus metrics on a private management port (backend `9090`, AI service
+  `9091`, set with `MANAGEMENT_PORT`) that is never published; Caddy returns 404 for `/actuator/*` other than
+  health. Start the bundled Prometheus with `--profile monitoring`; its UI listens on the server's localhost only
+  (`ssh -L 9090:localhost:9090 <server>`, then http://localhost:9090). Besides JVM, HTTP, database-pool and
+  Flyway metrics there are:
+
+  | Metric | Labels | Meaning |
+  |---|---|---|
+  | `chat_messages_total` | `outcome` = answered, rate_limited, empty, too_long, unknown_widget, origin_not_allowed | public chat messages |
+  | `auth_logins_total` | `outcome` = success, failure, rate_limited | admin logins |
+  | `ai_requests_seconds` | `operation` = reply, train; `outcome` = success, error | backend → AI service calls (latency histogram) |
+  | `ai_replies_total` | `result` = answered, no_match, no_data | how often the AI found a matching FAQ |
+  | `ai_tenant_models` | | tenant models loaded in the AI service |
+
+- **Logs:** `LOG_FORMAT=json` (set in the production stack) writes one JSON object per line (`@timestamp`,
+  `level`, `service`, `logger_name`, `message`, ...) for log collectors; the default is plain text.
+
+### Running several instances
+
+The backend and AI service can each run more than one instance:
+`docker compose -f docker-compose.prod.yml --env-file .env.production up -d --scale backend=2 --scale ai=2`.
+
+- **Load balancing:** Caddy finds every backend instance via DNS and keeps each client IP on one instance (SockJS
+  fallback transports need all requests of a chat session on the same instance, and cookies are unreliable for a
+  widget embedded on other sites). If an instance stops, its clients move to another within seconds.
+- **Rate limits:** the production stack keeps login and chat counters in Redis (`RATE_LIMIT_STORE=redis`), so all
+  instances enforce one shared limit. Without Redis (`RATE_LIMIT_STORE=memory`, the default outside the
+  production stack) each instance counts separately.
+- **AI models:** each retrain bumps the tenant's model version in the database; every AI instance checks it before
+  answering and reloads a tenant's model that another instance retrained.
+- **Metrics:** Prometheus discovers all instances via DNS, so each shows up as its own target.
+
+### Backups
+
+The `backup` service dumps both databases when it starts and then every `BACKUP_INTERVAL_HOURS` (default 24) into
+`./backups/<UTC timestamp>/` on the host (`main_backend.dump`, `ai_microservice.dump`, PostgreSQL custom format),
+and deletes backups older than `BACKUP_KEEP_DAYS` (default 14). A backup only gets its timestamp name once both
+dumps are complete. Copy `./backups` off the server as well (e.g. a nightly `rsync` or object-storage sync), since
+a backup on the same disk does not survive losing the server.
+
+- Back up now: `docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps backup now`
+- Restore: `deploy/restore.sh .env.production <timestamp>` asks for confirmation, stops the backend and AI service,
+  restores both databases (each in a single transaction), and starts them again; the AI service reloads its models
+  from the restored data. Admin logins and chat are unavailable for the few seconds this takes.
+
 Upgrades: `git pull` and repeat step 3; Flyway applies new migrations on startup. Keep the `pgdata` volume
-(your data) and `caddy_data` (certificates) between deployments, and back up `pgdata` regularly
-(e.g. `docker compose -f docker-compose.prod.yml exec postgres pg_dumpall -U "$DB_USER" > backup.sql`).
+(your data) and `caddy_data` (certificates) between deployments.
 The `production-stack` CI job builds the images and runs the smoke test on every pull request.
 
 ## Embedding the widget
@@ -234,29 +288,35 @@ Backend (`:8080`)
 
 `/tenants/**`, `/faq/**` and `/users/**` require `Authorization: Bearer <token>`. Errors return `{"message": ...}`.
 **SA** = super admins only; tenant and FAQ endpoints require access to the tenant involved.
+**Paged** lists take `?page=` (zero-based), `?size=` (default 50, max 200) and `?q=` (search), are sorted newest
+first, and return `{items, page, size, total, totalPages}`. Input limits: FAQ question 1000 and answer 3000
+characters, imports up to 5000 rows, tenant names 255 characters (400 with a message otherwise).
 
 | Method | Path | Description |
 |---|---|---|
 | POST | `/auth/login` | `{username, password}` → `{token, expiresAt, username}` (public; 401 bad credentials, 429 rate limited) |
 | GET | `/auth/me` | current user `{id, username, createdAt, role, tenantIds}` |
-| GET | `/users` | **SA** admin users `[{id, username, createdAt, role, tenantIds}]` |
+| GET | `/users` | **SA** **paged** admin users `{id, username, createdAt, role, tenantIds}`, `q` matches username |
 | POST | `/users` | **SA** `{username, password, role, tenantIds}` → create user |
 | PUT | `/users/{id}/access` | **SA** `{role, tenantIds}` — change another user's access (applies immediately) |
 | PUT | `/users/{id}/password` | **SA** `{password}` — reset another user's password (signs them out) |
 | PUT | `/users/me/password` | `{currentPassword, newPassword}` → fresh `{token, expiresAt, username}` |
 | DELETE | `/users/{id}` | **SA** delete another user (signs them out) |
 | POST | `/tenants/create` | **SA** `{name}` → tenant (with generated `widgetKey`) |
-| GET | `/tenants/list` | tenants the user can access (all for super admins), incl. `widgetKey`, `allowedOrigins` |
+| GET | `/tenants/list` | **paged** tenants the user can access (all for super admins), incl. `widgetKey`, `allowedOrigins`; `q` matches name |
+| GET | `/tenants/options` | every accessible tenant as `[{id, name, widgetKey}]`, sorted by name (for pickers) |
 | PUT | `/tenants/{id}/settings` | `{allowedOrigins: ["https://…"]}` — websites allowed to use the chat (empty = any) |
 | POST | `/tenants/{id}/widget-key` | rotate the widget key (old key stops working) |
 | POST | `/faq/create` | `{tenantId, question, answer}` |
-| GET | `/faq/list/{tenantId}` | tenant's FAQs |
+| GET | `/faq/list/{tenantId}` | **paged** tenant's FAQs; `q` matches question or answer |
+| GET | `/faq/export/{tenantId}` | all of the tenant's FAQs (CSV export) |
 | PUT | `/faq/{id}` | `{question, answer}` |
 | DELETE | `/faq/{id}` | delete FAQ |
 | POST | `/faq/import/{tenantId}` | `[{question, answer}]` — replaces all FAQs of the tenant |
 | POST | `/faq/train/{tenantId}` | push current FAQs to the AI service |
 | WS | `/ws` (native), `/ws-chat` (SockJS) | STOMP chat endpoints (public; see "Public chat protection") |
-| GET | `/actuator/health` | health check incl. database (public, no details) |
+| GET | `/actuator/health` | health check incl. database (management port; public via Caddy, no details) |
+| GET | `/actuator/prometheus` | Prometheus metrics (management port only, never public) |
 
 AI microservice (`:8081`, `/ai/**` requires `X-API-KEY`)
 
@@ -269,9 +329,6 @@ AI microservice (`:8081`, `/ai/**` requires `X-API-KEY`)
 ## Limitations (template scope)
 
 - Two fixed roles; there are no finer-grained permissions (e.g. read-only access).
-- Rate limits (login and chat) and the AI models are held in memory per instance: the production stack runs one
-  instance of each service; scaling out needs a shared store (e.g. Redis) or limits at the load balancer.
 - The `Origin` check stops other websites from embedding a tenant's chat in browsers, but a non-browser client
   can send any `Origin`; the per-IP rate limit is what bounds such traffic.
 - Answers are retrieval-only (best-matching FAQ), no generative model.
-- No metrics or structured logging yet beyond the health endpoints; Postgres backups are up to the operator.

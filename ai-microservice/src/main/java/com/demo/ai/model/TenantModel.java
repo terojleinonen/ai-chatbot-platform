@@ -8,6 +8,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class TenantModel {
+    public static final String NO_DATA = "No FAQ data available for this tenant yet.";
+    public static final String NO_MATCH = "I'm not sure yet. Could you rephrase your question?";
+
     private final List<TenantFaqEntity> faqs;
     private final TfIdfVectorizer vectorizer;
     private final List<RealVector> faqVectors;
@@ -25,7 +28,7 @@ public class TenantModel {
 
     public String getBestAnswer(String message) {
         if (faqs.isEmpty()) {
-            return "No FAQ data available for this tenant yet.";
+            return NO_DATA;
         }
         RealVector userVec = vectorizer.transform(message);
         double bestScore = 0;
@@ -40,6 +43,6 @@ public class TenantModel {
         if (best != null && bestScore > 0.2) {
             return best.getAnswer();
         }
-        return "I'm not sure yet. Could you rephrase your question?";
+        return NO_MATCH;
     }
 }

@@ -21,7 +21,7 @@ class LoginRateLimiterTest {
     }
 
     private final TestClock clock = new TestClock();
-    private final LoginRateLimiter limiter = new LoginRateLimiter(3, 5, Duration.ofMinutes(15), clock);
+    private final InMemoryLoginRateLimiter limiter = new InMemoryLoginRateLimiter(3, 5, Duration.ofMinutes(15), clock);
 
     private void fail(String ip, String user, int times) {
         for (int i = 0; i < times; i++) {

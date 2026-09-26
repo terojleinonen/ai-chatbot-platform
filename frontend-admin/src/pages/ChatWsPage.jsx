@@ -10,7 +10,7 @@ export default function ChatWsPage() {
   const clientRef = useRef(null);
   const sessionIdRef = useRef(crypto.randomUUID());
 
-  useEffect(() => { api.listTenants().then(setTenants); }, []);
+  useEffect(() => { api.tenantOptions().then(setTenants); }, []);
 
   useEffect(() => {
     const client = new Client({

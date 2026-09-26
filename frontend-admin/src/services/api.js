@@ -43,6 +43,12 @@ export function clearToken() {
   localStorage.removeItem(ROLE_KEY);
 }
 
+// "?page=1&size=50&q=x" from {page, size, q}, skipping empty values.
+function query(params = {}) {
+  const entries = Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== "");
+  return entries.length ? "?" + new URLSearchParams(entries).toString() : "";
+}
+
 // Throws an Error carrying the backend's {"message"} for non-2xx responses.
 async function ensureOk(r) {
   if (r.ok) return r;
@@ -89,24 +95,36 @@ export const api = {
     const r = await ensureOk(await request("/auth/me"));
     return r.json();
   },
-  listTenants: async () => {
-    const r = await request("/tenants/list");
+  // One page of tenants: {items, page, size, total, totalPages}.
+  listTenants: async (params) => {
+    const r = await ensureOk(await request(`/tenants/list${query(params)}`));
+    return r.json();
+  },
+  // Every accessible tenant as {id, name, widgetKey}, for pickers.
+  tenantOptions: async () => {
+    const r = await ensureOk(await request("/tenants/options"));
     return r.json();
   },
   createTenant: async (name) => {
     const r = await ensureOk(await request("/tenants/create", { method: "POST", json: { name } }));
     return r.json();
   },
-  getFaqs: async (tenantId) => {
-    const r = await request(`/faq/list/${tenantId}`);
+  // One page of a tenant's FAQs: {items, page, size, total, totalPages}.
+  getFaqs: async (tenantId, params) => {
+    const r = await ensureOk(await request(`/faq/list/${tenantId}${query(params)}`));
+    return r.json();
+  },
+  // All of a tenant's FAQs.
+  exportFaqs: async (tenantId) => {
+    const r = await ensureOk(await request(`/faq/export/${tenantId}`));
     return r.json();
   },
   addFaq: async (tenantId, question, answer) => {
-    const r = await request("/faq/create", { method: "POST", json: { tenantId, question, answer } });
+    const r = await ensureOk(await request("/faq/create", { method: "POST", json: { tenantId, question, answer } }));
     return r.json();
   },
   updateFaq: async (id, fields) => {
-    const r = await request(`/faq/${id}`, { method: "PUT", json: fields });
+    const r = await ensureOk(await request(`/faq/${id}`, { method: "PUT", json: fields }));
     return r.json();
   },
   deleteFaq: async (id) => {
@@ -127,8 +145,9 @@ export const api = {
     if (!r.ok) throw new Error(`Import failed (${r.status})`);
     return r.json();
   },
-  listUsers: async () => {
-    const r = await ensureOk(await request("/users"));
+  // One page of admin users: {items, page, size, total, totalPages}.
+  listUsers: async (params) => {
+    const r = await ensureOk(await request(`/users${query(params)}`));
     return r.json();
   },
   createUser: async (username, password, role, tenantIds) => {

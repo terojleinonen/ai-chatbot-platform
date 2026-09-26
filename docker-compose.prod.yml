@@ -1,5 +1,6 @@
 # Production stack. Only the "web" service (Caddy) is reachable from outside, on ports 80/443;
-# Postgres, the AI service and the backend live on a private network.
+# Postgres, Redis, the AI service and the backend live on a private network.
+# The backend and AI service can run several instances: --scale backend=2 --scale ai=2 (see README).
 #
 #   cp deploy/production.env.example .env.production   # then fill it in
 #   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
@@ -25,6 +26,19 @@ services:
       retries: 30
     networks: [internal]
 
+  # Shared login/chat rate-limit counters, so several backend instances enforce one limit. Counters only
+  # (short-lived), so no persistence.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [internal]
+
   ai:
     build: ./ai-microservice
     restart: unless-stopped
@@ -33,6 +47,7 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       AI_API_KEY: ${AI_API_KEY:?set AI_API_KEY}
+      LOG_FORMAT: json
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,8 +68,13 @@ services:
       CORS_ALLOWED_ORIGINS: https://${ADMIN_HOST:?set ADMIN_HOST}
       # Trust X-Forwarded-* from Caddy (private network) so rate limits see real client IPs.
       SERVER_FORWARD_HEADERS_STRATEGY: native
+      LOG_FORMAT: json
+      RATE_LIMIT_STORE: redis
+      REDIS_URL: redis://redis:6379
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       ai:
         condition: service_started
@@ -80,6 +100,41 @@ services:
     depends_on: [backend]
     networks: [internal]
 
+  # Dumps both databases at startup and then every BACKUP_INTERVAL_HOURS into ./backups/<timestamp>/ on the host,
+  # keeping BACKUP_KEEP_DAYS days. Copy ./backups off the server too. Restore with deploy/restore.sh.
+  backup:
+    image: postgres:16
+    restart: unless-stopped
+    entrypoint: ["/backup.sh"]
+    environment:
+      PGHOST: postgres
+      PGUSER: ${DB_USER}
+      PGPASSWORD: ${DB_PASSWORD}
+      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+    volumes:
+      - ./deploy/backup.sh:/backup.sh:ro
+      - ./backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal]
+
+  # Optional metrics: docker compose ... --profile monitoring up -d
+  # Scrapes both services' private management ports. The UI is published on the server's localhost only;
+  # reach it with an SSH tunnel: ssh -L 9090:localhost:9090 <server>, then open http://localhost:9090
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    profiles: [monitoring]
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks: [internal]
+
 networks:
   internal:
 
@@ -87,3 +142,4 @@ volumes:
   pgdata:
   caddy_data:
   caddy_config:
+  prometheus_data:

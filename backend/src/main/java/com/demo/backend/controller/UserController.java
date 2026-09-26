@@ -7,6 +7,7 @@ import com.demo.backend.security.AccessControl;
 import com.demo.backend.security.LoginRateLimiter;
 import com.demo.backend.security.TokenService;
 import com.demo.backend.service.UserService;
+import com.demo.backend.web.PageResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -50,10 +51,13 @@ public class UserController {
 
     // Everything except changing your own password is for super admins only.
 
+    /** One page of admin users, newest first, optionally filtered by username. */
     @GetMapping
-    public List<UserDto> list() {
+    public PageResponse<UserDto> list(@RequestParam(required = false) Integer page,
+                                      @RequestParam(required = false) Integer size,
+                                      @RequestParam(required = false) String q) {
         access.requireSuperAdmin();
-        return users.list().stream().map(UserDto::of).toList();
+        return PageResponse.of(users.search(PageResponse.query(q), PageResponse.request(page, size)), UserDto::of);
     }
 
     @PostMapping

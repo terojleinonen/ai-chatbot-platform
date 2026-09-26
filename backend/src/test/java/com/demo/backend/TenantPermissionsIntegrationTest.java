@@ -77,9 +77,9 @@ class TenantPermissionsIntegrationTest {
     @Test
     void tenantAdminSeesOnlyAssignedTenants() throws Exception {
         call(get("/tenants/list"), userToken, null).andExpect(status().isOk())
-                .andExpect(jsonPath("$[*].id", contains((int) tenantA)));
+                .andExpect(jsonPath("$.items[*].id", contains((int) tenantA)));
         call(get("/tenants/list"), superToken, null)
-                .andExpect(jsonPath("$[*].id", hasItems((int) tenantA, (int) tenantB)));
+                .andExpect(jsonPath("$.items[*].id", hasItems((int) tenantA, (int) tenantB)));
     }
 
     @Test
@@ -106,7 +106,7 @@ class TenantPermissionsIntegrationTest {
         call(post("/faq/train/" + tenantB), userToken, null).andExpect(status().isForbidden());
         // B's FAQ is untouched
         call(get("/faq/list/" + tenantB), superToken, null)
-                .andExpect(jsonPath("$[*].question", contains("B question")));
+                .andExpect(jsonPath("$.items[*].question", contains("B question")));
     }
 
     @Test
@@ -116,7 +116,7 @@ class TenantPermissionsIntegrationTest {
                 .andExpect(status().isOk())).get("id").asLong();
         org.junit.jupiter.api.Assertions.assertNotEquals(faqB, newId, "must create a new FAQ, not overwrite");
         call(get("/faq/list/" + tenantB), superToken, null)
-                .andExpect(jsonPath("$[*].question", contains("B question")));
+                .andExpect(jsonPath("$.items[*].question", contains("B question")));
     }
 
     @Test
@@ -137,6 +137,72 @@ class TenantPermissionsIntegrationTest {
     }
 
     @Test
+    void tenantOptionsAndExportRespectAccess() throws Exception {
+        call(get("/tenants/options"), userToken, null).andExpect(status().isOk())
+                .andExpect(jsonPath("$[*].id", contains((int) tenantA)))
+                .andExpect(jsonPath("$[0].widgetKey").isString());
+        call(get("/tenants/options"), superToken, null)
+                .andExpect(jsonPath("$[*].id", hasItems((int) tenantA, (int) tenantB)));
+        call(get("/faq/export/" + tenantB), superToken, null)
+                .andExpect(jsonPath("$[*].question", contains("B question")));
+        call(get("/faq/export/" + tenantB), userToken, null).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void faqListIsPagedAndSearchable() throws Exception {
+        for (int i = 1; i <= 5; i++) {
+            call(post("/faq/create"), superToken, Map.of("tenantId", tenantA, "question", "Question " + i,
+                    "answer", i % 2 == 0 ? "even answer" : "odd answer"));
+        }
+        call(get("/faq/list/" + tenantA + "?size=2"), superToken, null)
+                .andExpect(jsonPath("$.items[*].question", contains("Question 5", "Question 4")))
+                .andExpect(jsonPath("$.page").value(0))
+                .andExpect(jsonPath("$.size").value(2))
+                .andExpect(jsonPath("$.total").value(5))
+                .andExpect(jsonPath("$.totalPages").value(3));
+        call(get("/faq/list/" + tenantA + "?size=2&page=2"), superToken, null)
+                .andExpect(jsonPath("$.items[*].question", contains("Question 1")));
+        call(get("/faq/list/" + tenantA + "?q=EVEN"), superToken, null)
+                .andExpect(jsonPath("$.items[*].question", contains("Question 4", "Question 2")));
+        call(get("/faq/list/" + tenantA + "?size=100000&page=-3"), superToken, null)
+                .andExpect(jsonPath("$.size").value(200))
+                .andExpect(jsonPath("$.page").value(0));
+    }
+
+    @Test
+    void tenantAndUserListsArePagedAndSearchable() throws Exception {
+        String unique = UUID.randomUUID().toString().substring(0, 8);
+        long t1 = read(call(post("/tenants/create"), superToken, Map.of("name", "Paged-" + unique + "-one"))).get("id").asLong();
+        long t2 = read(call(post("/tenants/create"), superToken, Map.of("name", "Paged-" + unique + "-two"))).get("id").asLong();
+        call(get("/tenants/list?q=paged-" + unique), superToken, null)
+                .andExpect(jsonPath("$.items[*].id", contains((int) t2, (int) t1)))
+                .andExpect(jsonPath("$.total").value(2));
+        call(get("/tenants/list?q=paged-" + unique), userToken, null)   // not assigned to the tenant admin
+                .andExpect(jsonPath("$.total").value(0));
+        call(get("/users?q=" + userName.toUpperCase()), superToken, null)
+                .andExpect(jsonPath("$.items[*].username", contains(userName)));
+        call(get("/users?size=1"), superToken, null)
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.total", greaterThanOrEqualTo(2)));
+    }
+
+    @Test
+    void oversizedInputGetsAClear400() throws Exception {
+        call(post("/faq/create"), superToken, Map.of("tenantId", tenantA, "question", "q".repeat(1001), "answer", "a"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Question is too long (at most 1000 characters)"));
+        long id = read(call(post("/faq/create"), superToken, Map.of("tenantId", tenantA, "question", "Q", "answer", "A"))).get("id").asLong();
+        call(put("/faq/" + id), superToken, Map.of("question", "Q", "answer", "a".repeat(3001)))
+                .andExpect(status().isBadRequest());
+        call(post("/faq/import/" + tenantA), superToken, List.of(Map.of("question", "ok", "answer", "ok"), Map.of("question", "", "answer", "x")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Row 2: Question and answer are required"));
+        call(get("/faq/list/" + tenantA), superToken, null)
+                .andExpect(jsonPath("$.items[*].question", hasItem("Q")));   // failed import changed nothing
+        call(post("/tenants/create"), superToken, Map.of("name", "n".repeat(256))).andExpect(status().isBadRequest());
+    }
+
+    @Test
     void accessChangesTakeEffectImmediately() throws Exception {
         call(put("/users/" + userId + "/access"), superToken, Map.of("role", "TENANT_ADMIN", "tenantIds", List.of(tenantB)))
                 .andExpect(status().isOk())
@@ -152,10 +218,7 @@ class TenantPermissionsIntegrationTest {
 
     @Test
     void superAdminCannotChangeOwnAccess() throws Exception {
-        long adminId = -1;
-        for (JsonNode u : read(call(get("/users"), superToken, null))) {
-            if (u.get("username").asText().equals("admin")) adminId = u.get("id").asLong();
-        }
+        long adminId = read(call(get("/auth/me"), superToken, null)).get("id").asLong();
         call(put("/users/" + adminId + "/access"), superToken, Map.of("role", "TENANT_ADMIN"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("You cannot change your own access"));

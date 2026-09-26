@@ -61,20 +61,10 @@ class AuthIntegrationTest {
                 .andExpect(status().isOk());
         mvc.perform(get("/tenants/list").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[*].name", hasItem("Acme")));
+                .andExpect(jsonPath("$.items[*].name", hasItem("Acme")));
         mvc.perform(get("/auth/me").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.username").value("admin"));
-    }
-
-    @Test
-    void healthIsPublicButOtherActuatorEndpointsAreNotExposed() throws Exception {
-        mvc.perform(get("/actuator/health")).andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("UP"))
-                .andExpect(jsonPath("$.components").doesNotExist());
-        mvc.perform(get("/actuator/env")).andExpect(status().isUnauthorized());
-        String token = login("admin", "test-password");
-        mvc.perform(get("/actuator/env").header("Authorization", "Bearer " + token)).andExpect(status().isNotFound());
     }
 
     @Test

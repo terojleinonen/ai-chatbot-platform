@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../services/api";
 import { useAuth } from "../auth/AuthContext.jsx";
+import Pager from "../components/Pager.jsx";
+import SearchBox from "../components/SearchBox.jsx";
 
 const MIN_PASSWORD = 12;
 const ROLE_LABELS = { SUPER_ADMIN: "Super admin", TENANT_ADMIN: "Tenant admin" };
@@ -40,7 +42,10 @@ function AccessFields({ role, setRole, tenantIds, setTenantIds, tenants }) {
 
 export default function UsersPage() {
   const { username: me } = useAuth();
-  const [users, setUsers] = useState([]);
+  const [data, setData] = useState(null);   // PageResponse
+  const [page, setPage] = useState(0);
+  const [search, setSearch] = useState("");
+  const users = data?.items ?? [];
   const [tenants, setTenants] = useState([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -57,12 +62,11 @@ export default function UsersPage() {
   const [resetting, setResetting] = useState(null);
   const [resetPassword, setResetPassword] = useState("");
 
-  const load = () => api.listUsers().then(setUsers).catch(e => setError(e.message));
+  const load = (p = page) => api.listUsers({ page: p, q: search }).then(setData).catch(e => setError(e.message));
+  const goTo = (p) => { setPage(p); load(p); };
 
-  useEffect(() => {
-    load();
-    api.listTenants().then(setTenants);
-  }, []);
+  useEffect(() => { api.tenantOptions().then(setTenants); }, []);
+  useEffect(() => { goTo(0); }, [search]);
 
   const tenantName = (id) => tenants.find(t => t.id === id)?.name ?? `#${id}`;
 
@@ -89,7 +93,7 @@ export default function UsersPage() {
       setNewPassword("");
       setNewRole("TENANT_ADMIN");
       setNewTenantIds([]);
-      load();
+      goTo(0);   // newest first
     }
   };
 
@@ -102,14 +106,16 @@ export default function UsersPage() {
   const saveAccess = async () => {
     const ok = await run(async () => {
       const updated = await api.updateUserAccess(editing.id, editRole, editTenantIds);
-      setUsers(prev => prev.map(u => (u.id === updated.id ? updated : u)));
+      setData(prev => ({ ...prev, items: prev.items.map(u => (u.id === updated.id ? updated : u)) }));
     }, `Access for ${editing.username} updated. It applies to their next request.`);
     if (ok) setEditing(null);
   };
 
   const deleteUser = async (user) => {
     if (!window.confirm(`Delete user ${user.username}? They are signed out immediately.`)) return;
-    if (await run(() => api.deleteUser(user.id), `Deleted user ${user.username}.`)) load();
+    if (await run(() => api.deleteUser(user.id), `Deleted user ${user.username}.`)) {
+      goTo(users.length === 1 && page > 0 ? page - 1 : page);
+    }
   };
 
   const saveReset = async () => {
@@ -140,7 +146,8 @@ export default function UsersPage() {
       {error && <div className="mb-4 p-3 rounded bg-red-100 text-red-800" role="alert">{error}</div>}
       {notice && <div className="mb-4 p-3 rounded bg-green-100 text-green-800" role="status">{notice}</div>}
 
-      <div className="bg-white rounded shadow mb-6">
+      <div className="mb-3"><SearchBox placeholder="Search users" onSearch={setSearch} /></div>
+      <div className="bg-white rounded shadow mb-2">
         <table className="w-full text-left">
           <thead className="border-b text-sm text-gray-500">
             <tr>
@@ -180,7 +187,9 @@ export default function UsersPage() {
             ))}
           </tbody>
         </table>
+        {data && data.total === 0 && <p className="p-3 text-gray-600 text-sm">No users match your search.</p>}
       </div>
+      <div className="mb-6"><Pager data={data} onPage={goTo} label="users" /></div>
 
       <form onSubmit={createUser} className="bg-white p-4 rounded shadow max-w-md">
         <h2 className="font-semibold mb-2">Add user</h2>

@@ -2,6 +2,7 @@ package com.demo.backend.controller;
 
 import com.demo.backend.entity.Faq;
 import com.demo.backend.security.AccessControl;
+import com.demo.backend.web.PageResponse;
 import com.demo.backend.service.FaqService;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
@@ -29,8 +30,17 @@ public class FaqController {
         return service.create(faq);
     }
 
+    /** One page of the tenant's FAQs, newest first, optionally filtered by text in question or answer. */
     @GetMapping("/list/{tenantId}")
-    public List<Faq> list(@PathVariable Long tenantId) {
+    public PageResponse<Faq> list(@PathVariable Long tenantId, @RequestParam(required = false) Integer page,
+                                  @RequestParam(required = false) Integer size, @RequestParam(required = false) String q) {
+        access.requireTenantAccess(tenantId);
+        return PageResponse.of(service.search(tenantId, PageResponse.query(q), PageResponse.request(page, size)), f -> f);
+    }
+
+    /** All of the tenant's FAQs (for CSV export). */
+    @GetMapping("/export/{tenantId}")
+    public List<Faq> export(@PathVariable Long tenantId) {
         access.requireTenantAccess(tenantId);
         return service.list(tenantId);
     }

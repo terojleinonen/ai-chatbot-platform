@@ -1,0 +1,20 @@
+# Scrapes the services' management ports on the private network (see docker-compose.prod.yml). DNS discovery
+# finds every instance when the services are scaled out (--scale backend=2 ...).
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: backend
+    metrics_path: /actuator/prometheus
+    dns_sd_configs:
+      - names: [backend]
+        type: A
+        port: 9090
+        refresh_interval: 30s
+  - job_name: ai-microservice
+    metrics_path: /actuator/prometheus
+    dns_sd_configs:
+      - names: [ai]
+        type: A
+        port: 9091
+        refresh_interval: 30s

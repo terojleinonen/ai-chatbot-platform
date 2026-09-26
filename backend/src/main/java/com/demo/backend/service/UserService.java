@@ -11,6 +11,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.HashSet;
@@ -46,8 +49,8 @@ public class UserService {
         return username == null ? "" : username.trim().toLowerCase(Locale.ROOT);
     }
 
-    public List<AdminUser> list() {
-        return users.findAllByOrderByUsernameAsc();
+    public Page<AdminUser> search(String q, Pageable pageable) {
+        return users.search(q, pageable);
     }
 
     public AdminUser findByUsername(String username) {

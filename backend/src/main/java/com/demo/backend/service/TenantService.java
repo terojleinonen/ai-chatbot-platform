@@ -7,7 +7,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+
 import java.net.URI;
+import java.util.Collection;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -28,10 +32,20 @@ public class TenantService {
         if (name == null || name.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tenant name is required");
         }
+        if (name.trim().length() > 255) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tenant name is too long (at most 255 characters)");
+        }
         return repo.save(new Tenant(name.trim()));
     }
 
     public List<Tenant> list() { return repo.findAll(); }
+
+    /** Searches all tenants, or only {@code ids} when {@code allTenants} is false. */
+    public Page<Tenant> search(boolean allTenants, Collection<Long> ids, String q, Pageable pageable) {
+        // An empty IN list is not valid SQL everywhere; -1 never matches a tenant id.
+        Collection<Long> safeIds = ids.isEmpty() ? List.of(-1L) : ids;
+        return repo.search(allTenants, safeIds, q, pageable);
+    }
 
     public Optional<Tenant> findByWidgetKey(String widgetKey) {
         if (widgetKey == null || widgetKey.isBlank() || widgetKey.length() > 64) return Optional.empty();

@@ -11,8 +11,9 @@ node_modules/
 dist/
 .vite/
 
-# Production secrets
+# Production secrets and database backups
 .env.production
+/backups/
 
 # Playwright (e2e)
 test-results/

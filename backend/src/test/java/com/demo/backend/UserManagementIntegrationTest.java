@@ -74,8 +74,8 @@ class UserManagementIntegrationTest {
         JsonNode created = createUser(admin, name.toUpperCase());
         org.junit.jupiter.api.Assertions.assertEquals(name, created.get("username").asText(), "stored lowercase");
         call(get("/users"), admin, null).andExpect(status().isOk())
-                .andExpect(jsonPath("$[*].username", hasItem(name)))
-                .andExpect(jsonPath("$[0].passwordHash").doesNotExist());
+                .andExpect(jsonPath("$.items[*].username", hasItem(name)))
+                .andExpect(jsonPath("$.items[0].passwordHash").doesNotExist());
         login(name.toUpperCase(), STRONG); // usernames are case-insensitive
     }
 
@@ -104,7 +104,7 @@ class UserManagementIntegrationTest {
 
         call(delete("/users/" + id), admin, null).andExpect(status().isNoContent());
         call(get("/tenants/list"), userToken, null).andExpect(status().isUnauthorized());
-        call(get("/users"), admin, null).andExpect(jsonPath("$[*].username", not(hasItem(name))));
+        call(get("/users"), admin, null).andExpect(jsonPath("$.items[*].username", not(hasItem(name))));
     }
 
     @Test

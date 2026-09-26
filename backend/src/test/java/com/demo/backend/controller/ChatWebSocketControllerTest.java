@@ -1,11 +1,12 @@
 package com.demo.backend.controller;
 
-import com.demo.backend.chat.ChatRateLimiter;
+import com.demo.backend.chat.InMemoryChatRateLimiter;
 import com.demo.backend.entity.Tenant;
 import com.demo.backend.service.AiClientService;
 import com.demo.backend.service.TenantService;
 import com.demo.backend.websocket.ChatHandshakeInterceptor;
 import com.demo.backend.websocket.ChatMessage;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
@@ -25,13 +26,14 @@ class ChatWebSocketControllerTest {
     private final AiClientService ai = mock(AiClientService.class);
     private final TenantService tenants = mock(TenantService.class);
     private final SimpMessagingTemplate messaging = mock(SimpMessagingTemplate.class);
+    private final SimpleMeterRegistry metrics = new SimpleMeterRegistry();
     private ChatWebSocketController controller;
     private Tenant tenant;
 
     @BeforeEach
     void setUp() {
-        controller = new ChatWebSocketController(ai, tenants, new ChatRateLimiter(3, Duration.ofMinutes(1)),
-                messaging, 20, List.of("https://admin.example.com"));
+        controller = new ChatWebSocketController(ai, tenants, new InMemoryChatRateLimiter(3, Duration.ofMinutes(1)),
+                messaging, 20, List.of("https://admin.example.com"), metrics);
         tenant = new Tenant("Acme");
         tenant.setId(7L);
         tenant.rotateWidgetKey();
@@ -98,6 +100,15 @@ class ChatWebSocketControllerTest {
         controller.handle(msg(tenant.getWidgetKey(), "hi"), headers);
         verify(messaging).convertAndSend("/topic/replies/session-12345678",
                 Map.of("sessionId", "session-12345678", "reply", "AI answer"));
+    }
+
+    @Test
+    void countsOutcomes() {
+        controller.answer(msg(tenant.getWidgetKey(), "hi"), "1.1.1.1", null);
+        controller.answer(msg("guess", "hi"), "2.2.2.2", null);
+        controller.answer(msg("guess", "hi"), "3.3.3.3", null);
+        assertEquals(1.0, metrics.counter("chat.messages", "outcome", "answered").count());
+        assertEquals(2.0, metrics.counter("chat.messages", "outcome", "unknown_widget").count());
     }
 
     @Test

@@ -31,11 +31,16 @@ check "HTTP redirects to HTTPS" "$("${CURL[@]}" -o /dev/null -w '%{http_code} %{
 hsts=$("${CURL[@]}" -D - -o /dev/null "$API/actuator/health" | tr -d '\r' | grep -i '^strict-transport-security:')
 [ -n "$hsts" ] && pass "HSTS header present" || fail "HSTS header present"
 
+csp=$("${CURL[@]}" -D - -o /dev/null "$ADMIN/" | tr -d '\r' | grep -i '^content-security-policy:')
+[[ "$csp" == *"script-src 'self'"* && "$csp" == *"connect-src 'self' https://$API_HOST wss://$API_HOST"* ]] \
+  && pass "admin panel sends a strict Content-Security-Policy" || fail "admin panel sends a strict Content-Security-Policy" "$csp"
+
 admin_page=$("${CURL[@]}" "$ADMIN/")
 [[ "$admin_page" == *"<title>AI Chatbot Admin</title>"* ]] && pass "admin panel served" || fail "admin panel served"
 check "admin panel routes fall back to the SPA" "$("${CURL[@]}" -o /dev/null -w '%{http_code}' "$ADMIN/tenants")" 200
 bundle=$("${CURL[@]}" "$ADMIN/$(echo "$admin_page" | grep -oE 'assets/index-[^"]+\.js' | head -1)")
 [[ "$bundle" == *"https://$API_HOST"* ]] && pass "admin panel built for https://$API_HOST" || fail "admin panel built for https://$API_HOST"
+check "metrics are not public" "$("${CURL[@]}" -o /dev/null -w '%{http_code}' "$API/actuator/prometheus")" 404
 check "widget script served" "$("${CURL[@]}" -o /dev/null -w '%{http_code}' "$API/widget/chat-widget.js")" 200
 check "widget demo page not published" "$("${CURL[@]}" -o /dev/null -w '%{http_code}' "$API/widget/demo.html")" 404
 
