@@ -25,7 +25,10 @@ A multi-tenant FAQ chatbot platform:
   Claude" below). It keeps each tenant's FAQs in memory (loaded from its DB on startup), indexed with TF-IDF for
   picking relevant FAQs and for the keyword-matching fallback.
 - **Chat**: clients publish `{sessionId, widgetKey, content}` to `/app/chat.send` and subscribe to
-  `/topic/replies/{sessionId}`. See "Public chat protection" below.
+  `/topic/replies/{sessionId}`. Each reply streams there as `{sessionId, replyId, delta}` messages (text to append
+  as Claude writes it), then `{sessionId, replyId, reply, done: true}` with the complete text, which replaces the
+  deltas; replies that are not streamed (keyword matching, errors, rejected messages) are just the final message.
+  See "Public chat protection" below.
 - **Schema**: both services manage their tables with Flyway migrations (`src/main/resources/db/migration`);
   Hibernate only validates. Databases created before Flyway are adopted automatically (baselined at version 1).
 
@@ -38,9 +41,9 @@ cover the question it says so ("I'm not sure yet...") instead of guessing.
 - **Setup:** set `ANTHROPIC_API_KEY` for the AI service (a key from https://console.anthropic.com). Without it the
   service logs a warning and falls back to **keyword matching**: the FAQ whose question has the highest TF-IDF
   cosine similarity (above 0.2) is returned verbatim. Tests, CI and local development work without a key.
-- **Failures:** if a Claude call fails (network, rate limit, overload, timeout after `AI_LLM_TIMEOUT` and
-  `AI_LLM_MAX_RETRIES` retries) or the reply can't be shown (refused, cut off at `AI_LLM_MAX_TOKENS`), that
-  question is answered by keyword matching, so the chat keeps working. `ai_replies_total{source="keyword"}` rising
+- **Failures:** if a Claude call fails (network, rate limit, overload, no data for 20 seconds, or the whole reply
+  taking longer than `AI_LLM_TIMEOUT`, after `AI_LLM_MAX_RETRIES` retries) or the reply can't be shown (refused,
+  cut off at `AI_LLM_MAX_TOKENS`), that question is answered by keyword matching, so the chat keeps working. `ai_replies_total{source="keyword"}` rising
   while a key is set means Claude calls are failing; the AI service logs why.
 - **Which FAQs are sent:** all of a tenant's FAQs when they total at most `AI_LLM_MAX_CONTEXT_CHARS` characters
   (default 24000, roughly 6k tokens). That prompt is identical for every question to the tenant until its FAQs
@@ -48,6 +51,10 @@ cover the question it says so ("I'm not sure yet...") instead of guessing.
   questions within that window read it from the cache at a tenth of the input price. Larger
   FAQ sets send the most relevant FAQs (by TF-IDF similarity to the question) that fit, which varies per question
   and is not cached.
+- **Streaming:** replies appear in the widget and the admin panel's test chat word by word as Claude writes them
+  (Claude → AI service `/ai/reply/stream` → backend → STOMP). Claude's "not covered" marker is never streamed. If
+  Claude fails part-way through a reply, the final message replaces the partial text with the keyword-matching
+  answer.
 - **Conversation history:** the backend remembers each chat's last `CHAT_HISTORY_MAX_EXCHANGES` (default 10)
   question/answer exchanges and sends them with every new question, so Claude understands follow-ups ("and on
   weekends?"); the relevant-FAQ selection for large FAQ sets also looks at the two previous questions. A chat is
@@ -222,7 +229,7 @@ public development values from the `dev` profile are rejected outside it. Genera
 | ai-microservice | `ANTHROPIC_API_KEY` | for Claude answers | (empty: keyword matching) |
 | ai-microservice | `AI_LLM_MODEL` / `AI_LLM_EFFORT` | | `claude-opus-5` / `low` |
 | ai-microservice | `AI_LLM_MAX_TOKENS` / `AI_LLM_MAX_CONTEXT_CHARS` | | `2048` / `24000` |
-| ai-microservice | `AI_LLM_TIMEOUT` / `AI_LLM_MAX_RETRIES` | | `20s` / `1` |
+| ai-microservice | `AI_LLM_TIMEOUT` (whole reply) / `AI_LLM_MAX_RETRIES` | | `60s` / `1` |
 | ai-microservice | `ANTHROPIC_BASE_URL` | | Anthropic API |
 | backend, ai-microservice | `LOG_FORMAT` | | `plain` (`json` in the production stack) |
 | frontend-admin | `VITE_API_BASE` / `VITE_WS_URL` / `VITE_WIDGET_URL` | | `http://localhost:8080` / `ws://…/ws` / `…/widget/chat-widget.js` |
@@ -396,6 +403,7 @@ AI microservice (`:8081`, `/ai/**` requires `X-API-KEY`)
 | Method | Path | Description |
 |---|---|---|
 | POST | `/ai/reply` | `{tenantId, message, history?: [{question, answer}]}` → `{reply}` (history: earlier exchanges, oldest first, at most 20) |
+| POST | `/ai/reply/stream` | same request → newline-delimited JSON: `{delta}` lines as Claude writes, then `{reply, done: true}` (the complete reply, which replaces the deltas) |
 | POST | `/ai/train/{tenantId}` | `[{question, answer}]` — replace and retrain |
 | GET | `/health` | health check (no key) |
 

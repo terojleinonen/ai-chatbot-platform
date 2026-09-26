@@ -1,6 +1,8 @@
 (function () {
   let config = {};
   let stompClient = null;
+  // Bot replies still being streamed, by reply id.
+  const streaming = {};
   let sessionId = (window.crypto && crypto.randomUUID)
     ? crypto.randomUUID()
     : Date.now().toString(36) + Math.random().toString(36).slice(2);
@@ -51,9 +53,25 @@
     stompClient.debug = null;
 
     stompClient.connect({}, () => {
+      // A reply arrives as {replyId, delta} messages (text to append as the AI writes it), then
+      // {replyId, reply, done: true} with the complete text, which replaces what was streamed.
       stompClient.subscribe("/topic/replies/" + sessionId, (msg) => {
         const body = JSON.parse(msg.body);
-        addMessage(body.reply, "bot");
+        if (body.done) {
+          const div = streaming[body.replyId] || addMessage("", "bot");
+          delete streaming[body.replyId];
+          div.textContent = body.reply;
+          div.classList.remove("cw-streaming");
+          scrollToEnd();
+        } else if (typeof body.delta === "string") {
+          let div = streaming[body.replyId];
+          if (!div) {
+            div = streaming[body.replyId] = addMessage("", "bot");
+            div.classList.add("cw-streaming");
+          }
+          div.textContent += body.delta;
+          scrollToEnd();
+        }
       });
     }, () => {
       // Connection lost: retry after a short delay.
@@ -65,8 +83,14 @@
     const msgBox = document.getElementById("cw-messages");
     const div = document.createElement("div");
     div.className = "cw-msg cw-" + from;
-    div.innerText = text;
+    div.textContent = text;
     msgBox.appendChild(div);
+    scrollToEnd();
+    return div;
+  }
+
+  function scrollToEnd() {
+    const msgBox = document.getElementById("cw-messages");
     msgBox.scrollTop = msgBox.scrollHeight;
   }
 

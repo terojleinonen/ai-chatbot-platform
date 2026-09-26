@@ -17,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 /**
  * Keeps one in-memory model per tenant. Every retrain bumps the tenant's version in the database, and each
@@ -72,6 +73,15 @@ public class MultiTenantAiService {
 
     /** Answers {@code message}; {@code history} (earlier exchanges of the chat, oldest first) gives Claude context. */
     public String reply(Long tenantId, String message, List<ChatExchange> history) {
+        return reply(tenantId, message, history, text -> {});
+    }
+
+    /**
+     * Like {@link #reply(Long, String, List)}, passing Claude's text to {@code onText} as it is written. The returned
+     * reply is the complete answer and replaces any streamed text (they differ when Claude fails part-way and keyword
+     * matching answers instead).
+     */
+    public String reply(Long tenantId, String message, List<ChatExchange> history, Consumer<String> onText) {
         if (tenantId == null) return "Missing tenant id.";
         long current = versions.findVersion(tenantId).orElse(0L);
         Cached cached = models.get(tenantId);
@@ -86,7 +96,7 @@ public class MultiTenantAiService {
         }
         if (llm.enabled()) {
             try {
-                ClaudeResponder.Reply reply = llm.answer(cached.model(), message, history);
+                ClaudeResponder.Reply reply = llm.answer(cached.model(), message, history, onText);
                 return count(reply.answered() ? "answered" : "no_match", "llm", reply.text());
             } catch (AnthropicException | LlmUnusableReplyException e) {
                 log.warn("Claude reply failed for tenant {}, using keyword matching: {}", tenantId, e.toString());

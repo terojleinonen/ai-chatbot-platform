@@ -5,11 +5,14 @@ import com.demo.ai.dto.ChatExchange;
 import com.demo.ai.dto.TrainFaqDto;
 import com.demo.ai.service.MultiTenantAiService;
 import org.junit.jupiter.api.Test;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 class AiControllerTest {
@@ -60,5 +63,27 @@ class AiControllerTest {
             assertThrows(ResponseStatusException.class, () -> controller.reply(r));
         }
         verify(service, times(1)).reply(anyLong(), anyString(), anyList());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void streamsDeltasThenTheCompleteReply() throws Exception {
+        when(service.reply(eq(1L), eq("hours?"), eq(List.of()), any())).thenAnswer(inv -> {
+            java.util.function.Consumer<String> onText = inv.getArgument(3);
+            onText.accept("We're open ");
+            onText.accept("9 to 5.");
+            return "We're open 9 to 5.";
+        });
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        controller.replyStream(req(1L, "hours?"), response);
+        assertEquals("application/x-ndjson;charset=UTF-8", response.getContentType());
+        var json = new com.fasterxml.jackson.databind.ObjectMapper();
+        List<Object> lines = new java.util.ArrayList<>();
+        for (String line : response.getContentAsString().split("\n")) lines.add(json.readValue(line, java.util.Map.class));
+        assertEquals(List.of(
+                java.util.Map.of("delta", "We're open "),
+                java.util.Map.of("delta", "9 to 5."),
+                java.util.Map.of("reply", "We're open 9 to 5.", "done", true)), lines);
+        assertThrows(ResponseStatusException.class, () -> controller.replyStream(req(1L, " "), new MockHttpServletResponse()));
     }
 }

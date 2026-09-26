@@ -17,9 +17,19 @@ export default function ChatWsPage() {
       brokerURL: WS_URL,
       reconnectDelay: 5000,
       onConnect: () => {
+        // Replies stream as {replyId, delta} messages, then {replyId, reply, done: true} with the complete text.
         client.subscribe(`/topic/replies/${sessionIdRef.current}`, (msg) => {
           const body = JSON.parse(msg.body);
-          setMessages(prev => [...prev, { from: "bot", text: body.reply }]);
+          setMessages(prev => {
+            const i = prev.findIndex(m => m.replyId === body.replyId && m.streaming);
+            if (body.done) {
+              const final = { from: "bot", replyId: body.replyId, text: body.reply, streaming: false };
+              return i < 0 ? [...prev, final] : prev.map((m, j) => (j === i ? final : m));
+            }
+            if (typeof body.delta !== "string") return prev;
+            if (i < 0) return [...prev, { from: "bot", replyId: body.replyId, text: body.delta, streaming: true }];
+            return prev.map((m, j) => (j === i ? { ...m, text: m.text + body.delta } : m));
+          });
         });
       }
     });
@@ -65,9 +75,11 @@ export default function ChatWsPage() {
           <div key={i} className={`mb-1 ${m.from === "user" ? "text-right" : "text-left"}`}>
             <span
               className={
-                "inline-block px-2 py-1 rounded text-sm " +
-                (m.from === "user" ? "bg-blue-600 text-white" : "bg-gray-200")
+                "inline-block px-2 py-1 rounded text-sm whitespace-pre-wrap " +
+                (m.from === "user" ? "bg-blue-600 text-white" : "bg-gray-200") +
+                (m.streaming ? " opacity-70" : "")
               }
+              data-streaming={m.streaming ? "true" : undefined}
             >
               {m.text}
             </span>

@@ -57,6 +57,7 @@ ai:
     max-tokens: ${AI_LLM_MAX_TOKENS:2048}
     # FAQs up to this many characters are all sent (and prompt-cached); larger sets send the most relevant ones.
     max-context-chars: ${AI_LLM_MAX_CONTEXT_CHARS:24000}
-    # Per attempt; a failed attempt is retried max-retries times before falling back to keyword matching.
-    timeout: ${AI_LLM_TIMEOUT:20s}
+    # For a whole (streamed) reply, per attempt; a stream silent for 20s also fails. A failed attempt is retried
+    # max-retries times (only if nothing was streamed yet) before falling back to keyword matching.
+    timeout: ${AI_LLM_TIMEOUT:60s}
     max-retries: ${AI_LLM_MAX_RETRIES:1}
