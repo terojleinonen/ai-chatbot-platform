@@ -98,13 +98,27 @@ cd backend && SPRING_PROFILES_ACTIVE=dev ADMIN_PASSWORD=change-me mvn spring-boo
 # 4. Admin panel → http://localhost:5173 (log in as admin / change-me)
 cd frontend-admin && npm install && npm run dev
 
-# 5. Widget demo → open http://localhost:3000/demo.html
+# 5. Widget demo → open http://localhost:3000/demo (see the notes below)
 npx serve widget
 ```
 
 Then in the admin panel: create a tenant, add FAQs (or import a CSV with `question,answer` headers),
 and test on the **Chat** page or with the widget: copy the tenant's widget key from the **Tenants** page and open
-`http://localhost:3000/demo.html?widgetKey=<key>`.
+`http://localhost:3000/demo?widgetKey=<key>`.
+
+Notes:
+
+- **One command:** `scripts/run-local.sh up` does all of the above (and `down` / `status`). It starts Colima if
+  Docker is not running, reads `ANTHROPIC_API_KEY` from the environment or from `~/.anthropic_key` (a file with an
+  `export ANTHROPIC_API_KEY=...` line), writes logs to `.run/` and serves the widget on `WIDGET_PORT` (default 3001).
+- **Widget URL:** use `/demo`, not `/demo.html`. `serve` redirects `/demo.html` to `/demo` and drops the query
+  string, so the widget would start without its `widgetKey` and show no chat bubble.
+- **Port 3000** may already be taken by another program; `npx serve widget -l 3001` serves it elsewhere.
+- **`docker compose` not found, or `up --wait` fails** (the old Python `docker-compose` v1, as with some Colima or
+  MacPorts setups): start Postgres directly with the same settings, which is what the script does:
+  `docker run -d --name ai-chatbot-postgres -e POSTGRES_USER=user -e POSTGRES_PASSWORD=pass -e POSTGRES_DB=main_backend -p 5432:5432 -v "$PWD/docker/init-databases.sql:/docker-entrypoint-initdb.d/init-databases.sql:ro" -v ai-chatbot-pgdata:/var/lib/postgresql/data postgres:16`
+- **Login says "Cannot reach the backend":** open the admin panel as exactly `http://localhost:5173`. The dev
+  profile only allows that origin (`CORS_ALLOWED_ORIGINS`), so `127.0.0.1` or another port is rejected.
 
 ## Tests and CI
 
